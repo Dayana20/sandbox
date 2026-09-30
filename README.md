@@ -1,4 +1,11 @@
 # Python Application Template: A Component-Based Mail Client
+## Fall 2026 Open Source Project Repo
+## Contributors
+-   **Dayana Alejandro**
+-   **Shini Agarwal**
+-   **Annie Jain**
+-   **Laya Mangalagiri**
+-   **Yashwanth Kasanneni**
 
 [![CircleCI](https://circleci.com/gh/ivanearisty/oss-taapp.svg?style=shield)](https://circleci.com/gh/ivanearisty/oss-taapp)
 [![Coverage](https://img.shields.io/badge/coverage-85%2B%25-brightgreen)](https://circleci.com/gh/ivanearisty/oss-taapp)
