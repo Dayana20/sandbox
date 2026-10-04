@@ -107,7 +107,7 @@ Latest run: **9 passed**.
 | `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 
-`GET /_test/metadata` exists only inside `test_storage_foundation.py`.
+`GET /files/metadata` exists only inside `test_storage_foundation.py`.
 
 ## Layout
 

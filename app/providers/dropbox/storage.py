@@ -19,12 +19,43 @@ class DropboxStorage:
         self,
         path: str,
     ) -> FileResource:
-        raise NotImplementedError
+        """
+            Fetch metadata of a file from cloud storage.
+
+            Args:
+                file_path (str): The path to the file in cloud
+                storage.
+            Returns:
+                dict: The metadata of the file.
+            Raises:
+                FileNotFoundError: If the file does not exist in cloud storage.
+        """
+        # check if the file exists
+        try:
+            metadata = self.client.files_get_metadata(path)
+            return self.to_file_resource(metadata)
+        except dropbox.exceptions.ApiError as e:
+            if isinstance(e.error, dropbox.files.GetMetadataError):
+                raise FileNotFoundError(f"File not found: {path}")
+            else:
+                raise e
+        # raise NotImplementedError
 
     def download(
         self,
         path: str,
     ) -> bytes:
+        """
+            Download the content of a file from cloud storage.
+    
+            Args:
+                file_path (str): The path to the file in cloud
+                storage.
+            Returns:
+                str: The content of the file.
+            Raises:
+                FileNotFoundError: If the file does not exist in cloud storage.
+        """
         raise NotImplementedError
 
     def move(

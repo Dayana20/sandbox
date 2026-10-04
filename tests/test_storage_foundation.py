@@ -19,7 +19,7 @@ from tests.fakes import FakeDocumentStorage
 app = create_app()
 
 
-@app.get("/_test/metadata")
+@app.get("/files/metadata")
 def get_test_metadata(
     path: str,
     storage: DocumentStorage = Depends(
@@ -70,7 +70,7 @@ def test_storage_dependency_can_be_replaced():
     ] = override_storage
 
     response = client.get(
-        "/_test/metadata",
+        "/files/metadata",
         params={
             "path": "/report.pdf",
         },
@@ -96,7 +96,7 @@ def test_missing_file_returns_404():
     ] = override_storage
 
     response = client.get(
-        "/_test/metadata",
+        "/files/metadata",
         params={
             "path": "/missing.pdf",
         },
@@ -161,7 +161,7 @@ def test_storage_errors_are_mapped_to_http(
     ] = override_storage
 
     response = client.get(
-        "/_test/metadata",
+        "/files/metadata",
         params={
             "path": "/test.pdf",
         },
