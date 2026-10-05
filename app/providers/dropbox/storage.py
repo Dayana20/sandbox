@@ -1,6 +1,13 @@
 import dropbox
+from dropbox.exceptions import ApiError, DropboxException
+from dropbox.files import WriteMode
 
+from app.errors import ProviderError
 from app.models.file import FileResource
+from app.providers.dropbox.error_mapping import (
+    translate_dropbox_exception,
+    translate_write_error,
+)
 
 
 class DropboxStorage:
@@ -13,7 +20,36 @@ class DropboxStorage:
         path: str,
         content: bytes,
     ) -> FileResource:
-        raise NotImplementedError
+        """
+            Upload a new file to cloud storage.
+
+            Args:
+                path (str): Where to save the file, e.g. "/docs/report.pdf".
+                content (bytes): The file contents.
+            Returns:
+                FileResource: Metadata of the uploaded file.
+            Raises:
+                FileConflictError: If a file already exists at this path.
+        """
+        # WriteMode.add + autorename=False so we never overwrite or rename
+        # an existing file. Dropbox returns a conflict error instead.
+        try:
+            metadata = self.client.files_upload(
+                content,
+                path,
+                mode=WriteMode.add,
+                autorename=False,
+                mute=True,
+                strict_conflict=True,
+            )
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_write_error(exc.error.get_path().reason, path) from exc
+            raise ProviderError(f"Dropbox could not upload: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        return self.to_file_resource(metadata)
 
     def get_metadata(
         self,

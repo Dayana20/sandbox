@@ -2,7 +2,7 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. Document routes are not built yet, and the Dropbox `upload`, `get_metadata`, `download`, `move`, and `delete` methods still raise `NotImplementedError`.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload) and `GET /files/metadata` are built. The Dropbox `download`, `move`, and `delete` methods still raise `NotImplementedError`.
 
 ## Base
 
@@ -93,19 +93,68 @@ return self.to_file_resource(metadata)
 
 Use `translate_lookup_error` when a Dropbox lookup fails, and `translate_write_error` when a write fails. Tests should override `get_document_storage` with `FakeDocumentStorage` so they never call Dropbox. `tests/test_storage_foundation.py` shows that override.
 
+## Upload a file
+
+`POST /files` (form data) returns `201 Created`.
+
+Saves a new file to the Dropbox app folder and returns its metadata. If a file already exists at that path, nothing is changed and you get `409`.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `file` | yes | The file to upload |
+| `path` | yes | Where to save it, e.g. `/docs/report.pdf` |
+
+Example response:
+
+```json
+{
+  "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+  "name": "report.pdf",
+  "path": "/docs/report.pdf",
+  "size": 20483,
+  "modified_at": "2026-10-05T14:30:00"
+}
+```
+
+Errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB |
+| 403 | `permission_denied` | Token can't write to Dropbox |
+| 409 | `conflict` | A file already exists at `path` |
+| 502 | `provider_error` | Dropbox failed |
+
+Try it:
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs/report.pdf"
+```
+
+How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
+
 ## Tests
 
 ```powershell
 pytest
 ```
 
-Latest run: **9 passed**.
+The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it:
+
+```powershell
+pytest tests/integration -v
+```
+
+Latest run: **31 passed** (including the real Dropbox upload test).
 
 | File | What it checks |
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
 | `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
+| `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
+| `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
+| `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
 
 `GET /files/metadata` exists only inside `test_storage_foundation.py`.
 

@@ -1,4 +1,4 @@
-from app.errors import FileNotFoundError
+from app.errors import FileConflictError, FileNotFoundError
 from app.models.file import FileResource
 
 
@@ -12,6 +12,11 @@ class FakeDocumentStorage:
         path: str,
         content: bytes,
     ) -> FileResource:
+
+        if path in self.files:
+            raise FileConflictError(
+                f"File already exists: {path}"
+            )
 
         name = path.split("/")[-1]
 
