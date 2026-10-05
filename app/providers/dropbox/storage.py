@@ -1,11 +1,12 @@
 import dropbox
 from dropbox.exceptions import ApiError, DropboxException
-from dropbox.files import WriteMode
+from dropbox.files import FileMetadata, WriteMode
 
-from app.errors import ProviderError
+from app.errors import InvalidRequestError, ProviderError
 from app.models.file import FileResource
 from app.providers.dropbox.error_mapping import (
     translate_dropbox_exception,
+    translate_lookup_error,
     translate_write_error,
 )
 
@@ -105,7 +106,37 @@ class DropboxStorage:
         self,
         path: str,
     ) -> None:
-        raise NotImplementedError
+        """
+            Delete a file from cloud storage.
+
+            Args:
+                path (str): The file to delete, e.g. "/docs/report.pdf".
+            Raises:
+                FileNotFoundError: If nothing exists at this path.
+                InvalidRequestError: If the path is a folder.
+                PermissionDeniedError: If the token can't delete this path.
+        """
+        # Dropbox deletes folders recursively, so check it is a file first
+        try:
+            metadata = self.client.files_get_metadata(path)
+        except ApiError as exc:
+            raise translate_lookup_error(exc.error.get_path(), path) from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        if not isinstance(metadata, FileMetadata):
+            raise InvalidRequestError(f"Only files can be deleted: {path}")
+
+        try:
+            self.client.files_delete_v2(path)
+        except ApiError as exc:
+            if exc.error.is_path_lookup():
+                raise translate_lookup_error(exc.error.get_path_lookup(), path) from exc
+            if exc.error.is_path_write():
+                raise translate_write_error(exc.error.get_path_write(), path) from exc
+            raise ProviderError(f"Dropbox could not delete: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
 
     def to_file_resource(self, metadata: dropbox.files.FileMetadata) -> FileResource:
         return FileResource(
