@@ -100,7 +100,50 @@ class DropboxStorage:
         path: str,
         new_path: str,
     ) -> FileResource:
-        raise NotImplementedError
+        """
+            Rename or move a file in cloud storage.
+
+            Args:
+                path (str): The file to move, e.g. "/docs/report.pdf".
+                new_path (str): Where it should end up, e.g. "/archive/report.pdf".
+            Returns:
+                FileResource: Metadata of the file at its new path. The id does not change.
+            Raises:
+                FileNotFoundError: If nothing exists at path.
+                InvalidRequestError: If path is a folder.
+                FileConflictError: If something already exists at new_path.
+                PermissionDeniedError: If the token can't move this file.
+        """
+        # Dropbox moves folders with everything inside, so check it is a file first
+        try:
+            metadata = self.client.files_get_metadata(path)
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_lookup_error(exc.error.get_path(), path) from exc
+            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        if not isinstance(metadata, FileMetadata):
+            raise InvalidRequestError(f"Only files can be moved: {path}")
+
+        # autorename=False so an existing file at new_path is never overwritten
+        # or renamed. Dropbox returns a conflict error instead.
+        try:
+            result = self.client.files_move_v2(path, new_path, autorename=False)
+        except ApiError as exc:
+            error = exc.error
+            if error.is_from_lookup():
+                raise translate_lookup_error(error.get_from_lookup(), path) from exc
+            if error.is_from_write():
+                raise translate_write_error(error.get_from_write(), path) from exc
+            if error.is_to():
+                raise translate_write_error(error.get_to(), new_path) from exc
+            raise ProviderError(f"Dropbox could not move: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        return self.to_file_resource(result.metadata)
 
     def delete(
         self,

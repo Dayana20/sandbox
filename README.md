@@ -2,7 +2,7 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload) and `GET /files/metadata` are built. The Dropbox `download`, `move`, and `delete` methods still raise `NotImplementedError`.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files` and `GET /files/metadata` are built. The Dropbox `download` method still raises `NotImplementedError`.
 
 ## Base
 
@@ -133,6 +133,50 @@ curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs
 
 How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
 
+## Update (rename or move) a file
+
+`PATCH /files?path=...` with a JSON body returns `200 OK` and the file's new metadata.
+
+Renames or moves the file at `path` to `new_path`. The file keeps the same `id` and content. Missing parent folders in `new_path` are created by Dropbox. Folders are refused with `400`, because Dropbox would move everything inside them. An existing file at `new_path` is never overwritten: you get `409` and nothing changes.
+
+| Field | Where | Required | Description |
+| --- | --- | --- | --- |
+| `path` | query | yes | The file to move, e.g. `/docs/report.pdf` |
+| `new_path` | JSON body | yes | Where it should end up, e.g. `/archive/report.pdf`. Must differ from `path` by more than letter case. Dropbox does not support case-only renames like `/a.pdf` -> `/A.pdf`. |
+
+Example response:
+
+```json
+{
+  "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+  "name": "report.pdf",
+  "path": "/archive/report.pdf",
+  "size": 20483,
+  "modified_at": "2026-10-05T14:30:00"
+}
+```
+
+Errors:
+
+| Status | Code | When | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`/`new_path`, `new_path` equals `path` ignoring case, `path` is a folder, or Dropbox refuses the name | No, fix the input |
+| 403 | `permission_denied` | Token can't move this file or write to `new_path` | No |
+| 404 | `not_found` | Nothing exists at `path` | No |
+| 409 | `conflict` | Something already exists at `new_path` | No, pick another `new_path` |
+| 502 | `provider_error` | Dropbox failed or is rate limiting | Yes, but first check whether the file already moved (a repeat returns `404` if it did) |
+
+Repeating a successful move returns `404`, because the file is no longer at `path`.
+
+Try it:
+
+```bash
+curl -i -X PATCH "http://127.0.0.1:8000/files?path=/docs/report.pdf" \
+  -H "Content-Type: application/json" -d '{"new_path": "/archive/report.pdf"}'
+```
+
+How it works: the route checks both paths with `validate_path` and rejects a `new_path` that matches `path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `path`. Destination errors (`to`) are translated against `new_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
+
 ## Delete a file
 
 `DELETE /files?path=...` returns `204 No Content` with no body.
@@ -168,7 +212,7 @@ The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it
 pytest tests/integration -v
 ```
 
-Latest run: **31 passed** (including the real Dropbox upload test).
+Latest run: **70 passed, 4 skipped** (the real Dropbox tests skip without a token).
 
 | File | What it checks |
 | --- | --- |
@@ -180,6 +224,9 @@ Latest run: **31 passed** (including the real Dropbox upload test).
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
 | `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
 | `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: correct call and error mapping |
+| `test_update.py` | `PATCH /files` with the fake storage: success, content kept and old path gone, case-only rename refused, repeated move, missing file, 409 without overwrite, invalid input never reaches storage, Dropbox errors |
+| `test_dropbox_update.py` | `DropboxStorage.move` with a mocked Dropbox client: correct call, folder refused, error mapping for source and destination |
+| `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
 | `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
 
 `GET /files/metadata` exists only inside `test_storage_foundation.py`.
@@ -191,7 +238,7 @@ app/
 ├── main.py                 # App and error handlers
 ├── dependencies.py         # get_document_storage()
 ├── errors.py
-├── api/routes/health.py
+├── api/routes/            # health, upload, update, delete
 ├── models/file.py
 └── providers/
     ├── base.py             # DocumentStorage

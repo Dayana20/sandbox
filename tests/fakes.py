@@ -70,6 +70,11 @@ class FakeDocumentStorage:
                 f"File not found: {path}"
             )
 
+        if new_path in self.files:
+            raise FileConflictError(
+                f"File already exists: {new_path}"
+            )
+
         resource, content = self.files.pop(path)
 
         updated = FileResource(

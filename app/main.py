@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
@@ -91,6 +92,26 @@ def create_app() -> FastAPI:
                 "error": {
                     "code": "invalid_request",
                     "message": str(exc),
+                }
+            },
+        )
+
+    # FastAPI rejects badly typed input (e.g. a number where a string is
+    # expected) with its own 422 body. Return our 400 error shape instead.
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ):
+        first = exc.errors()[0]
+        field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalid_request",
+                    "message": f"{field}: {first['msg']}",
                 }
             },
         )
