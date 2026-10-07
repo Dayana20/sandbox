@@ -5,16 +5,13 @@ from app.errors import InvalidRequestError
 from app.models.file import FileResource
 from app.providers.base import DocumentStorage
 
-
 # Dropbox files_upload accepts up to 150 MB in one request
 MAX_UPLOAD_BYTES = 150 * 1024 * 1024
-
 
 router = APIRouter(
     prefix="/files",
     tags=["files"],
 )
-
 
 def validate_path(path: str | None) -> str:
     if not path:
