@@ -1,21 +1,36 @@
-# Python
+# Python-generated files
 __pycache__/
-*.py[cod]
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
 
-# Virtual environment
-doc/
-.venv/
-venv/
+# Virtual environments
+.venv
 
-# Environment variables
-.env
-
-# Testing
+# Tooling Caches
+.mypy_cache/
 .pytest_cache/
+.ruff_cache/
+.coverage
 
-# IDE
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE files
 .vscode/
 .idea/
 
-# OS
-.DS_Store
+# MkDocs build artifacts
+site/
+
+# Secrets
+token.json
+.env
+credentials.json
+
+.coverage*
+TESTING_STATUS.md
