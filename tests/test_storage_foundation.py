@@ -1,5 +1,4 @@
 import pytest
-from fastapi import Depends
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_document_storage
@@ -12,21 +11,10 @@ from app.errors import (
 )
 from app.main import create_app
 from app.models.file import FileResource
-from app.providers.base import DocumentStorage
 from tests.fakes import FakeDocumentStorage
 
 
 app = create_app()
-
-
-@app.get("/files/metadata")
-def get_test_metadata(
-    path: str,
-    storage: DocumentStorage = Depends(
-        get_document_storage
-    ),
-) -> FileResource:
-    return storage.get_metadata(path)
 
 
 client = TestClient(app)

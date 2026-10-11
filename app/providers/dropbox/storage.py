@@ -60,23 +60,29 @@ class DropboxStorage:
             Fetch metadata of a file from cloud storage.
 
             Args:
-                file_path (str): The path to the file in cloud
-                storage.
+                path (str): The file to look up, e.g. "/docs/report.pdf".
             Returns:
-                dict: The metadata of the file.
+                FileResource: Metadata of the file.
             Raises:
-                FileNotFoundError: If the file does not exist in cloud storage.
+                FileNotFoundError: If nothing exists at this path.
+                InvalidRequestError: If the path is a folder or not a valid Dropbox path.
+                PermissionDeniedError: If the token can't read this path.
+                ProviderError: If Dropbox fails.
         """
-        # check if the file exists
         try:
             metadata = self.client.files_get_metadata(path)
-            return self.to_file_resource(metadata)
-        except dropbox.exceptions.ApiError as e:
-            if isinstance(e.error, dropbox.files.GetMetadataError):
-                raise FileNotFoundError(f"File not found: {path}")
-            else:
-                raise e
-        # raise NotImplementedError
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_lookup_error(exc.error.get_path(), path) from exc
+            raise ProviderError(f"Dropbox could not read metadata: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        # folders have no size, so they can't be returned as a FileResource
+        if not isinstance(metadata, FileMetadata):
+            raise InvalidRequestError(f"Only files have metadata: {path}")
+
+        return self.to_file_resource(metadata)
 
     def download(
         self,

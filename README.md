@@ -133,6 +133,43 @@ curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs
 
 How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
 
+## Get file metadata
+
+`GET /files/metadata?path=...` returns `200 OK` with the file's metadata. It only reads; nothing in Dropbox changes.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `path` | yes | The file to look up, e.g. `/docs/report.pdf` |
+
+Example response:
+
+```json
+{
+  "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+  "name": "report.pdf",
+  "path": "/docs/report.pdf",
+  "size": 20483,
+  "modified_at": "2026-10-05T14:30:00"
+}
+```
+
+Errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`, or `path` is a folder |
+| 403 | `permission_denied` | Token can't read this path |
+| 404 | `not_found` | Nothing exists at `path` |
+| 502 | `provider_error` | Dropbox failed |
+
+Try it:
+
+```bash
+curl -i "http://127.0.0.1:8000/files/metadata?path=/docs/report.pdf"
+```
+
+How it works: the route in `app/api/routes/read.py` checks `path` with `validate_path` and calls `storage.get_metadata()` on the `DocumentStorage` interface. `DropboxStorage.get_metadata()` calls Dropbox `files_get_metadata`, refuses folders, and returns a `FileResource`. Lookup failures go through `translate_lookup_error`, so a missing file is `404`.
+
 ## Update (rename or move) a file
 
 `PATCH /files?path=...` with a JSON body returns `200 OK` and the file's new metadata.
@@ -212,13 +249,16 @@ The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it
 pytest tests/integration -v
 ```
 
-Latest run: **70 passed, 4 skipped** (the real Dropbox tests skip without a token).
+Latest run: **93 passed** (including the real Dropbox tests).
 
 | File | What it checks |
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
 | `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
+| `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
+| `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
+| `integration/test_read_dropbox.py` | Reads metadata of a real Dropbox file and checks a missing path returns 404 |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
@@ -229,8 +269,6 @@ Latest run: **70 passed, 4 skipped** (the real Dropbox tests skip without a toke
 | `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
 | `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
 
-`GET /files/metadata` exists only inside `test_storage_foundation.py`.
-
 ## Layout
 
 ```
@@ -238,7 +276,7 @@ app/
 ├── main.py                 # App and error handlers
 ├── dependencies.py         # get_document_storage()
 ├── errors.py
-├── api/routes/            # health, upload, update, delete
+├── api/routes/            # health, upload, read, update, delete
 ├── models/file.py
 └── providers/
     ├── base.py             # DocumentStorage
