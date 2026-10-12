@@ -95,11 +95,20 @@ class DropboxStorage:
                 file_path (str): The path to the file in cloud
                 storage.
             Returns:
-                str: The content of the file.
+                Response: The content of the file.
             Raises:
                 FileNotFoundError: If the file does not exist in cloud storage.
         """
-        raise NotImplementedError
+        try:
+            metadata, response = self.client.files_download(path)
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_lookup_error(exc.error.get_path(), path) from exc
+            raise ProviderError(f"Dropbox could not download: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+        # return the content of the file as response.content, which is a bytes object
+        return response.content
 
     def move(
         self,
