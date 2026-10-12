@@ -269,17 +269,19 @@ How it works: the route checks `path` with the same `validate_path` as upload an
 
 ## Tests
 
+Fast tests use the in-memory fake and mocked Dropbox clients. They need no Dropbox token and no network:
+
 ```powershell
 pytest
 ```
 
-The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it:
+A plain `pytest` leaves out `tests/integration`. Those tests call real Dropbox, so they need `DROPBOX_ACCESS_TOKEN` in `.env`. Run them separately:
 
 ```powershell
 pytest tests/integration -v
 ```
 
-Latest run: **93 passed** (including the real Dropbox tests).
+Without a token they are skipped. They write under `/integration-tests/` and delete what they create.
 
 | File | What it checks |
 | --- | --- |
@@ -301,6 +303,19 @@ Latest run: **93 passed** (including the real Dropbox tests).
 | `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
 | `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
 
+## Lint and type check
+
+```powershell
+ruff check .
+mypy app
+```
+
+`pyproject.toml` holds the pytest, ruff, and mypy settings.
+
+## CI
+
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main` and `yashwanth`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
+
 ## Layout
 
 ```
@@ -315,11 +330,15 @@ app/
     └── dropbox/            # client, storage, error_mapping
 scripts/verify_dropbox.py
 tests/                      # fakes and the tests above
+.github/workflows/ci.yml    # pytest, ruff, mypy
+pyproject.toml              # pytest, ruff, mypy settings
+requirements.txt
+.python-version
 ```
 
 ## Setup
 
-Python 3.10 or newer. Copy `.env.example` to `.env` and fill it in. `.env` stays local.
+Python 3.10 (pinned in `.python-version`; CI uses the same version). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
 
 ```powershell
 python -m venv doc
@@ -338,15 +357,16 @@ cp .env.example .env
 | Variable | Purpose |
 | --- | --- |
 | `APP_NAME` | API title |
-| `DROPBOX_APP_KEY` | Dropbox app key |
-| `DROPBOX_APP_SECRET` | Dropbox app secret |
-| `DROPBOX_ACCESS_TOKEN` | Token used to create the Dropbox client |
+| `DROPBOX_ACCESS_TOKEN` | Required for the file routes and the real Dropbox tests. This is the token the Dropbox client is created with. |
+| `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` | Loaded into settings but not used yet |
 
 ## Run
 
 ```powershell
 uvicorn app.main:app --reload
 ```
+
+The app starts without a Dropbox token. The token is only read when a file route needs Dropbox.
 
 Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 

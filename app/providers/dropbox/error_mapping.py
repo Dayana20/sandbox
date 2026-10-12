@@ -90,11 +90,6 @@ def translate_write_error(
             f"No write permission: {path}"
         )
 
-    if error.is_access_restricted():
-        return PermissionDeniedError(
-            f"Access restricted: {path}"
-        )
-
     if error.is_disallowed_name():
         return InvalidRequestError(
             f"Dropbox does not allow this filename: {path}"

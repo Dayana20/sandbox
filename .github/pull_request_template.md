@@ -19,8 +19,8 @@
 - [ ] 🔨 Build / tooling
 
 ## Impacted Areas
-- [ ] `mail_client_api`
-- [ ] `gmail_client_impl`
+- [ ] `app/api` (routes)
+- [ ] `app/providers` (`DocumentStorage` / Dropbox)
 - [ ] Documentation
 - [ ] Tests
 - [ ] Tooling / CI
@@ -29,10 +29,9 @@
 ## Testing
 ### Commands executed
 ```bash
-# Example (edit as needed)
-uv run pytest src/ tests/
-uv run mypy src tests
-uv run ruff check .
+pytest
+ruff check .
+mypy app
 ```
 
 ### Results
