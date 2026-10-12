@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Create a report to help us improve the email assistant system
+about: Create a report to help us improve the document storage service
 title: '[BUG] '
 labels: ['bug', 'needs-triage']
 assignees: ''
@@ -13,8 +13,8 @@ assignees: ''
 **Summary:** A clear and concise description of what the bug is.
 
 **Component(s) Affected:**
-- [ ] `mail_client_api` - Mail client abstraction
-- [ ] `gmail_client_impl` - Gmail client implementation
+- [ ] `app/api` - HTTP routes
+- [ ] `app/providers` - `DocumentStorage` and the Dropbox implementation
 - [ ] Testing infrastructure
 - [ ] CI/CD pipeline
 - [ ] Documentation
@@ -38,9 +38,9 @@ A clear and concise description of what actually happened.
 **Minimal Reproducible Example:**
 ```python
 # Provide the minimal code that reproduces the issue
-from mail_client_api import get_client
+from app.dependencies import get_document_storage
 
-client = get_client()
+storage = get_document_storage()
 # ... rest of the code that causes the bug
 ```
 
@@ -48,8 +48,8 @@ client = get_client()
 
 ### System Environment
 - **Operating System:** [e.g., macOS 14.0, Ubuntu 22.04, Windows 11]
-- **Python Version:** [e.g., 3.11.5]
-- **UV Version:** [run `uv --version`]
+- **Python Version:** [e.g., 3.10.6]
+- **pip Version:** [run `pip --version`]
 
 ### Project Environment
 - **Branch:** [e.g., main, develop, feature-branch]
@@ -57,11 +57,9 @@ client = get_client()
 - **Dependencies:** [any recent dependency changes]
 
 ### Authentication Setup
-- [ ] Using local credential files (`credentials.json`, `token.json`)
-- [ ] Using environment variables
-- [ ] Interactive authentication
-- [ ] Non-interactive authentication
-- [ ] No authentication required for this bug
+- [ ] Using `DROPBOX_ACCESS_TOKEN` from `.env`
+- [ ] Using `FakeDocumentStorage` (no Dropbox)
+- [ ] No Dropbox access required for this bug
 
 ## Error Details
 
@@ -75,9 +73,9 @@ Paste the complete error message and stack trace here
 Paste relevant log output here (remove sensitive information)
 ```
 
-### CircleCI Build (if applicable)
-- **Build Link:** [paste CircleCI build URL if relevant]
-- **Failed Job:** [e.g., lint, test, integration]
+### CI Run (if applicable)
+- **Run Link:** [paste GitHub Actions run URL if relevant]
+- **Failed Step:** [e.g., Tests, Lint, Type check]
 
 ## Impact Assessment
 
@@ -129,7 +127,7 @@ Did this issue start happening after any recent changes?
 ### Test Commands That Fail
 ```bash
 # List the specific test commands that demonstrate this bug
-uv run pytest src/component/tests/test_specific.py::test_method -v
+pytest tests/test_read.py::test_name -v
 ```
 
 ## Screenshots/Attachments

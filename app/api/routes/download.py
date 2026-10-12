@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Response
 from app.dependencies import get_document_storage
-from app.errors import InvalidRequestError, FileNotFoundError
-from app.models.file import FileResource
+from app.errors import InvalidRequestError
 from app.providers.base import DocumentStorage
 
 # Dropbox has no max cap to download

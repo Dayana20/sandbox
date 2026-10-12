@@ -1,20 +1,14 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from pydantic_core import ValidationError
 import pytest
 from dropbox.exceptions import ApiError, RateLimitError
 from dropbox.files import (
     DownloadError,
-    UploadWriteFailed,
-    WriteError,
     LookupError,)
 
 from app.errors import (
-    FileConflictError,
     FileNotFoundError,
-    InvalidRequestError,
-    PermissionDeniedError,
     ProviderError,
 )
 
