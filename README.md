@@ -2,7 +2,7 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files` and `GET /files/metadata` are built. The Dropbox `download` method still raises `NotImplementedError`.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
 ## Base
 
@@ -170,6 +170,36 @@ curl -i "http://127.0.0.1:8000/files/metadata?path=/docs/report.pdf"
 
 How it works: the route in `app/api/routes/read.py` checks `path` with `validate_path` and calls `storage.get_metadata()` on the `DocumentStorage` interface. `DropboxStorage.get_metadata()` calls Dropbox `files_get_metadata`, refuses folders, and returns a `FileResource`. Lookup failures go through `translate_lookup_error`, so a missing file is `404`.
 
+
+## Download file
+
+`GET /files/download?path=...` returns `200 OK` with the file's raw bytes in the response body. Use it when you need the actual document content instead of the metadata returned by `GET /files/metadata`.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `path` | yes | The file to download, e.g. `/docs/report.pdf` |
+
+The route returns the bytes without setting a file-specific MIME type or `Content-Disposition` filename. Clients should choose the local filename when saving the response.
+
+Errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing or empty `path`, or Dropbox rejects the path as malformed |
+| 403 | `permission_denied` | Token can't read or download this path |
+| 404 | `not_found` | Nothing exists at `path` |
+| 502 | `provider_error` | Dropbox failed |
+
+Try it:
+
+```bash
+curl --fail --show-error --output report.pdf \
+  "http://127.0.0.1:8000/files/download?path=/docs/report.pdf"
+```
+
+How it works: the route in `app/api/routes/download.py` rejects a missing or empty `path`, then calls `storage.download()` through the `DocumentStorage` interface. `DropboxStorage.download()` calls Dropbox `files_download()` and returns the response content bytes. Dropbox lookup errors are translated with `translate_lookup_error`; missing files return `404`, malformed paths return `400`, and restricted paths return `403`. Provider failures return `502`. Unlike the metadata route, this endpoint returns the document bytes rather than a `FileResource` JSON payload.
+
+
 ## Update (rename or move) a file
 
 `PATCH /files?path=...` with a JSON body returns `200 OK` and the file's new metadata.
@@ -259,6 +289,8 @@ Latest run: **93 passed** (including the real Dropbox tests).
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
 | `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
 | `integration/test_read_dropbox.py` | Reads metadata of a real Dropbox file and checks a missing path returns 404 |
+| `test_download.py` | `GET /files/download` with fake storage: returned bytes, empty content, missing path/file, and storage errors |
+| `test_dropbox_download.py` | `DropboxStorage.download` with a mocked Dropbox client: returned bytes and Dropbox error mapping |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
@@ -276,7 +308,7 @@ app/
 ├── main.py                 # App and error handlers
 ├── dependencies.py         # get_document_storage()
 ├── errors.py
-├── api/routes/            # health, upload, read, update, delete
+├── api/routes/            # health, upload, read, download, update, delete
 ├── models/file.py
 └── providers/
     ├── base.py             # DocumentStorage
