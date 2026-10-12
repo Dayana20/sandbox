@@ -93,6 +93,39 @@ return self.to_file_resource(metadata)
 
 Use `translate_lookup_error` when a Dropbox lookup fails, and `translate_write_error` when a write fails. Tests should override `get_document_storage` with `FakeDocumentStorage` so they never call Dropbox. `tests/test_storage_foundation.py` shows that override.
 
+Put `@logs_dropbox_errors` on every new `DropboxStorage` method so its Dropbox failures are logged (see [Dropbox error logs](#dropbox-error-logs)).
+
+## Paths
+
+Every route that takes a file path checks it with `validate_path` from `app/validation.py` before calling storage. A bad path returns `400 invalid_request` and Dropbox is never called. The same rules apply to upload, metadata, download, move (both `path` and `new_path`) and delete:
+
+| Rule | Rejected example |
+| --- | --- |
+| Required | missing or empty |
+| Starts with `/` | `docs/report.pdf` |
+| Ends with a file name, not `/` | `/docs/`, `/` |
+| No empty, `.` or `..` segments | `/docs//a.pdf`, `/docs/./a.pdf`, `/docs/../a.pdf` |
+
+Paths are not normalized or lower-cased; the service passes them to Dropbox exactly as given. Dropbox's own `id:` and `ns:` path forms are not accepted. Dropbox can still refuse a path that passes these checks (for example a name it disallows), which is also returned as `400`.
+
+## Dropbox error logs
+
+When Dropbox fails, the caller gets a short error like `File not found: /docs/a.pdf`. The original Dropbox error is written to the server log instead, one line per failure, by the `logs_dropbox_errors` decorator in `app/providers/dropbox/error_mapping.py`:
+
+```
+dropbox_error operation=get_metadata path=/docs/a.pdf error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
+```
+
+| Field | Meaning |
+| --- | --- |
+| `operation` | The `DropboxStorage` method that failed |
+| `path` | The path it was called with (the source path for a move) |
+| `error` | The error we returned to the caller |
+| `dropbox_error` | The Dropbox exception class, plus the typed Dropbox error for API and auth errors |
+| `request_id` | Dropbox's id for the request, useful when asking Dropbox support |
+
+`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. The token, file contents and Dropbox's free-text messages are never logged. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
+
 ## Upload a file
 
 `POST /files` (form data) returns `201 Created`.
@@ -185,7 +218,7 @@ Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing or empty `path`, or Dropbox rejects the path as malformed |
+| 400 | `invalid_request` | Missing or bad `path` (see [Paths](#paths)), or Dropbox rejects the path as malformed |
 | 403 | `permission_denied` | Token can't read or download this path |
 | 404 | `not_found` | Nothing exists at `path` |
 | 502 | `provider_error` | Dropbox failed |
@@ -197,7 +230,7 @@ curl --fail --show-error --output report.pdf \
   "http://127.0.0.1:8000/files/download?path=/docs/report.pdf"
 ```
 
-How it works: the route in `app/api/routes/download.py` rejects a missing or empty `path`, then calls `storage.download()` through the `DocumentStorage` interface. `DropboxStorage.download()` calls Dropbox `files_download()` and returns the response content bytes. Dropbox lookup errors are translated with `translate_lookup_error`; missing files return `404`, malformed paths return `400`, and restricted paths return `403`. Provider failures return `502`. Unlike the metadata route, this endpoint returns the document bytes rather than a `FileResource` JSON payload.
+How it works: the route in `app/api/routes/download.py` checks `path` with `validate_path`, then calls `storage.download()` through the `DocumentStorage` interface. `DropboxStorage.download()` calls Dropbox `files_download()` and returns the response content bytes. Dropbox lookup errors are translated with `translate_lookup_error`; missing files return `404`, malformed paths return `400`, and restricted paths return `403`. Provider failures return `502`. Unlike the metadata route, this endpoint returns the document bytes rather than a `FileResource` JSON payload.
 
 
 ## Update (rename or move) a file
@@ -265,7 +298,7 @@ Try it:
 curl -i -X DELETE "http://127.0.0.1:8000/files?path=/docs/report.pdf"
 ```
 
-How it works: the route checks `path` with the same `validate_path` as upload and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
+How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
 
 ## Tests
 
@@ -279,7 +312,7 @@ The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it
 pytest tests/integration -v
 ```
 
-Latest run: **93 passed** (including the real Dropbox tests).
+Latest fast run: **166 passed, 5 skipped** (the real Dropbox tests skip without a token).
 
 | File | What it checks |
 | --- | --- |
@@ -289,6 +322,8 @@ Latest run: **93 passed** (including the real Dropbox tests).
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
 | `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
 | `integration/test_read_dropbox.py` | Reads metadata of a real Dropbox file and checks a missing path returns 404 |
+| `test_validation.py` | `validate_path` accepts good paths and rejects each bad kind. Every route that takes a path returns 400 for each bad path without calling storage. |
+| `test_dropbox_error_logging.py` | Dropbox failures are logged once with operation, path, error, Dropbox error and request id. Outages log at `ERROR` without a stack trace or response body. The token is never logged. Our own refusals and successes are not logged. |
 | `test_download.py` | `GET /files/download` with fake storage: returned bytes, empty content, missing path/file, and storage errors |
 | `test_dropbox_download.py` | `DropboxStorage.download` with a mocked Dropbox client: returned bytes and Dropbox error mapping |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
@@ -308,6 +343,7 @@ app/
 ├── main.py                 # App and error handlers
 ├── dependencies.py         # get_document_storage()
 ├── errors.py
+├── validation.py           # validate_path(), shared by every route
 ├── api/routes/            # health, upload, read, download, update, delete
 ├── models/file.py
 └── providers/
