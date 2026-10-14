@@ -4,6 +4,7 @@ from app.dependencies import get_document_storage
 from app.errors import InvalidRequestError
 from app.models.file import FileResource
 from app.providers.base import DocumentStorage
+from app.validation import validate_path
 
 # Dropbox files_upload accepts up to 150 MB in one request
 MAX_UPLOAD_BYTES = 150 * 1024 * 1024
@@ -12,21 +13,6 @@ router = APIRouter(
     prefix="/files",
     tags=["files"],
 )
-
-def validate_path(path: str | None) -> str:
-    if not path:
-        raise InvalidRequestError("path is required")
-
-    if not path.startswith("/") or path.endswith("/"):
-        raise InvalidRequestError(
-            f"path must start with / and end with a file name: {path}"
-        )
-
-    for part in path[1:].split("/"):
-        if part in ("", ".", ".."):
-            raise InvalidRequestError(f"Invalid path: {path}")
-
-    return path
 
 
 @router.post("", status_code=201)
