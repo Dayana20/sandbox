@@ -34,7 +34,7 @@ Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundErro
 
 ## Storage
 
-- `get_document_storage()` creates a Dropbox client from `DROPBOX_ACCESS_TOKEN` and returns `DropboxStorage`.
+- `get_document_storage()` creates a Dropbox client from the credentials in `.env` and returns `DropboxStorage`.
 - `to_file_resource()` maps Dropbox file metadata onto `FileResource`.
 - `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the shared exceptions above.
 - `FakeDocumentStorage` (`tests/fakes.py`) keeps files in memory and raises `FileNotFoundError` for a missing path.
@@ -308,7 +308,7 @@ Fast tests use the in-memory fake and mocked Dropbox clients. They need no Dropb
 pytest
 ```
 
-A plain `pytest` leaves out `tests/integration`. Those tests call real Dropbox, so they need `DROPBOX_ACCESS_TOKEN` in `.env`. Run them separately:
+A plain `pytest` leaves out `tests/integration`. Those tests call real Dropbox, so they need Dropbox credentials in `.env` (see Setup). Run them separately:
 
 ```powershell
 pytest tests/integration -v
@@ -320,6 +320,7 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
 | `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
+| `test_dropbox_client.py` | `create_dropbox_client()` uses the refresh token when set, falls back to an access token, and errors clearly when credentials are missing |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
 | `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
@@ -364,7 +365,7 @@ app/
 └── providers/
     ├── base.py             # DocumentStorage
     └── dropbox/            # client, storage, error_mapping
-scripts/verify_dropbox.py
+scripts/                    # verify_dropbox, get_refresh_token
 tests/                      # fakes and the tests above
 .github/workflows/ci.yml    # pytest, ruff, mypy
 pyproject.toml              # pytest, ruff, mypy settings
@@ -393,8 +394,19 @@ cp .env.example .env
 | Variable | Purpose |
 | --- | --- |
 | `APP_NAME` | API title |
-| `DROPBOX_ACCESS_TOKEN` | Required for the file routes and the real Dropbox tests. This is the token the Dropbox client is created with. |
-| `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` | Loaded into settings but not used yet |
+| `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` | From the Settings tab of your app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) |
+| `DROPBOX_REFRESH_TOKEN` | Used with the app key and secret to log in. It does not expire, so the app keeps working. See below. |
+| `DROPBOX_ACCESS_TOKEN` | Optional fallback, used only when no refresh token is set. A token generated in the App Console expires after about 4 hours. |
+
+### Dropbox credentials
+
+The app needs the `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write` permissions (Permissions tab in the App Console).
+
+1. Put `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` in `.env`.
+2. Run `python -m scripts.get_refresh_token`. Open the URL it prints, click Allow, and paste the code back.
+3. Copy the `DROPBOX_REFRESH_TOKEN=...` line it prints into `.env`.
+
+You only do this once. The Dropbox SDK uses the refresh token to get a new access token whenever the old one expires.
 
 ## Run
 
@@ -402,14 +414,14 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-The app starts without a Dropbox token. The token is only read when a file route needs Dropbox.
+The app starts without Dropbox credentials. They are only read when a file route needs Dropbox.
 
 Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
-Check the Dropbox token with:
+Check the Dropbox credentials with:
 
 ```powershell
 python -m scripts.verify_dropbox
 ```
 
-A working token prints the account ID and display name.
+Working credentials print the account ID and display name.

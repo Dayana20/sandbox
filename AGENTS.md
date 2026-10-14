@@ -13,7 +13,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - `app/api/routes/` - one file per feature: `upload.py`, `read.py`, `update.py`, `delete.py`, `health.py`
 - `app/providers/base.py` - `DocumentStorage`, the interface routes depend on
 - `app/providers/dropbox/` - the Dropbox implementation:
-  - `client.py` creates the Dropbox SDK client from `.env`
+  - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
 - `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
@@ -48,7 +48,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 - Route tests replace Dropbox with `FakeDocumentStorage` using `app.dependency_overrides[get_document_storage]`.
 - `DropboxStorage` is tested with a mocked Dropbox client, so no network is needed.
-- Integration tests skip themselves when `DROPBOX_ACCESS_TOKEN` is missing, write under `/integration-tests/`, and delete what they create.
+- Integration tests skip themselves when no Dropbox credentials are set, write under `/integration-tests/`, and delete what they create.
 
 ## Adding an endpoint
 
