@@ -16,6 +16,10 @@ class Settings:
         "DROPBOX_ACCESS_TOKEN"
     )
 
+    dropbox_refresh_token: str | None = os.getenv(
+        "DROPBOX_REFRESH_TOKEN"
+    )
+
     dropbox_app_key: str | None = os.getenv(
         "DROPBOX_APP_KEY"
     )

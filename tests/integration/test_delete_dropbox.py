@@ -4,15 +4,17 @@ import dropbox
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import settings
 from app.main import app
-from app.providers.dropbox.client import create_dropbox_client
+from app.providers.dropbox.client import (
+    create_dropbox_client,
+    dropbox_credentials_configured,
+)
 
 
-# Only runs when a real Dropbox token is in .env
+# Only runs when Dropbox credentials are in .env
 pytestmark = pytest.mark.skipif(
-    not settings.dropbox_access_token,
-    reason="DROPBOX_ACCESS_TOKEN not set",
+    not dropbox_credentials_configured(),
+    reason="Dropbox credentials not set",
 )
 
 
