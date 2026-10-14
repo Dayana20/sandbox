@@ -6,15 +6,17 @@ Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_d
 
 ## Base
 
-`DocumentStorage` (`app/providers/base.py`):
+`DocumentStorage` (`app/providers/base.py`) is the interface between the service and the storage provider. Routes only use this; they don't know Dropbox is behind it.
 
-| Method | Returns |
-| --- | --- |
-| `upload(path, content)` | `FileResource` |
-| `get_metadata(path)` | `FileResource` |
-| `download(path)` | `bytes` |
-| `move(path, new_path)` | `FileResource` |
-| `delete(path)` | `None` |
+| Method | Purpose | Input | Returns | Changes Dropbox? | Caller can assume |
+| --- | --- | --- | --- | --- | --- |
+| `upload(path, content)` | Save a new file | file path, bytes | `FileResource` | Yes | An existing file is never overwritten or renamed |
+| `get_metadata(path)` | Look up a file | file path | `FileResource` | No | Only files, not folders |
+| `download(path)` | Get a file's contents | file path | `bytes` | No | Bytes are exactly what was uploaded |
+| `move(path, new_path)` | Rename or move a file | old path, new path | `FileResource` | Yes | The `id` stays the same; nothing at `new_path` is overwritten |
+| `delete(path)` | Delete a file | file path | `None` | Yes | Only files are deleted, never folders |
+
+Paths are absolute inside the Dropbox app folder, e.g. `/docs/report.pdf`.
 
 `FileResource` (`app/models/file.py`) has `id`, `name`, `path`, `size`, and optional `modified_at`.
 
@@ -38,6 +40,18 @@ Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundErro
 - `to_file_resource()` maps Dropbox file metadata onto `FileResource`.
 - `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the shared exceptions above.
 - `FakeDocumentStorage` (`tests/fakes.py`) keeps files in memory and raises `FileNotFoundError` for a missing path.
+
+## Provider boundary
+
+| Question | Answer |
+| --- | --- |
+| Which code knows about Dropbox? | Only `app/providers/dropbox/` (`client.py`, `storage.py`, `error_mapping.py`) and the one place that picks the provider, `app/dependencies.py` |
+| Which code only uses our own types? | Routes in `app/api/routes/`, `app/models/file.py`, `app/errors.py`, `app/validation.py` |
+| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` builds the Dropbox client and returns a `DropboxStorage` |
+| How does it reach the routes? | Each route asks for `storage: DocumentStorage = Depends(get_document_storage)`. Routes never create it themselves |
+| How do tests swap it? | `app.dependency_overrides[get_document_storage] = lambda: FakeDocumentStorage()`. No network or credentials needed |
+| Where are Dropbox objects translated? | `DropboxStorage.to_file_resource()` turns Dropbox `FileMetadata` into our `FileResource`; `error_mapping.py` turns Dropbox errors into ours |
+| What changes to use another provider? | Add a new class with the same five methods (e.g. under `app/providers/gdrive/`) and return it from `get_document_storage()`. Routes and tests don't change |
 
 ## Using this for CRUD
 
