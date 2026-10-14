@@ -5,6 +5,7 @@ from dropbox.files import FileMetadata, WriteMode
 from app.errors import InvalidRequestError, ProviderError
 from app.models.file import FileResource
 from app.providers.dropbox.error_mapping import (
+    logs_dropbox_errors,
     translate_dropbox_exception,
     translate_lookup_error,
     translate_write_error,
@@ -16,6 +17,7 @@ class DropboxStorage:
     def __init__(self, client: dropbox.Dropbox):
         self.client = client
 
+    @logs_dropbox_errors
     def upload(
         self,
         path: str,
@@ -52,6 +54,7 @@ class DropboxStorage:
 
         return self.to_file_resource(metadata)
 
+    @logs_dropbox_errors
     def get_metadata(
         self,
         path: str,
@@ -84,6 +87,7 @@ class DropboxStorage:
 
         return self.to_file_resource(metadata)
 
+    @logs_dropbox_errors
     def download(
         self,
         path: str,
@@ -110,6 +114,7 @@ class DropboxStorage:
         # return the content of the file as response.content, which is a bytes object
         return response.content
 
+    @logs_dropbox_errors
     def move(
         self,
         path: str,
@@ -160,6 +165,7 @@ class DropboxStorage:
 
         return self.to_file_resource(result.metadata)
 
+    @logs_dropbox_errors
     def delete(
         self,
         path: str,

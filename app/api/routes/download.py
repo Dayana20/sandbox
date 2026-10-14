@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Response
+
 from app.dependencies import get_document_storage
-from app.errors import InvalidRequestError
 from app.providers.base import DocumentStorage
+from app.validation import validate_path
 
 # Dropbox has no max cap to download
 router = APIRouter(
@@ -17,16 +18,10 @@ def download_file(
 ) -> Response:
     '''
     Download a file from cloud storage.
-    If path is not provided, returns 400.
-    Returns 404 if nothing exists at the path.
+    Returns 400 for a missing or bad path, 404 if nothing exists at the path.
     '''
-    if not path:
-        raise InvalidRequestError("path is required")
-    # retturn 502 if the provider fails to download
-    # include detailed error message in the response
-    # include provide error code in the response
+    path = validate_path(path)
+
     return Response(
         content=storage.download(path)
     )
-
-    # return storage.download(path)
