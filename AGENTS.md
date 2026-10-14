@@ -41,6 +41,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
     uvicorn app.main:app --reload       # API at http://127.0.0.1:8000/docs
     pytest                              # fast tests, no Dropbox needed
     pytest tests/integration -v         # real Dropbox, needs .env
+    ruff check .                        # lint
+    mypy app                            # type check
 
 ## Tests
 
@@ -61,5 +63,5 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - Branch off `yashwanth`, open a PR into `yashwanth`. Don't push to it directly.
 - A teammate reviews and someone other than the author merges.
 - Keep each PR to one feature. Don't mix in unrelated changes.
-- All tests must pass before merging.
+- `pytest`, `ruff check .` and `mypy app` must pass before merging. CI runs all three.
 - Say in the PR description if you used AI help.

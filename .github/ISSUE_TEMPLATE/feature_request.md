@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea or enhancement for the email assistant system
+about: Suggest an idea or enhancement for the document storage service
 title: '[FEATURE] '
 labels: ['enhancement', 'needs-discussion']
 assignees: ''
@@ -13,8 +13,8 @@ assignees: ''
 **Brief Description:** A clear and concise description of the feature you'd like to see added.
 
 **Component(s) Affected:**
-- [ ] `mail_client_api` - Mail client abstraction (new operations)
-- [ ] `gmail_message_impl` - Gmail message implementation
+- [ ] `app/api` - HTTP routes
+- [ ] `app/providers` - `DocumentStorage` and the Dropbox implementation
 - [ ] New component (specify name)
 - [ ] Testing infrastructure
 - [ ] CI/CD pipeline  
@@ -41,11 +41,11 @@ Detailed description of the proposed feature:
 ### API Design (if applicable)
 ```python
 # Show how the new feature would be used
-from mail_client_api import get_client
+from app.dependencies import get_document_storage
 
-client = get_client()
+storage = get_document_storage()
 # Example of new functionality
-result = client.new_feature_method(parameters)
+result = storage.new_feature_method(parameters)
 ```
 
 ### Component Architecture Impact
@@ -149,7 +149,7 @@ Explain why the main proposal is preferred over alternatives:
 
 ### Integration Testing  
 - [ ] Test component interactions
-- [ ] Test with real Gmail API (if applicable)
+- [ ] Test with real Dropbox (if applicable)
 - [ ] Test authentication flows
 
 ### End-to-End Testing
@@ -159,7 +159,7 @@ Explain why the main proposal is preferred over alternatives:
 ### CI/CD Considerations
 - [ ] Feature works in CI environment
 - [ ] No new authentication requirements
-- [ ] Maintains test coverage thresholds
+- [ ] `pytest`, `ruff check .` and `mypy app` pass
 
 ## Documentation Requirements
 
@@ -168,15 +168,11 @@ Explain why the main proposal is preferred over alternatives:
 - [ ] Type hints for all new code
 - [ ] Inline comments for complex logic
 
-### Component Documentation
-- [ ] Update component README.md files
+### Project Documentation
+- [ ] Update README.md (endpoint docs, setup)
+- [ ] Update AGENTS.md if the code layout changes
 - [ ] Add usage examples
 - [ ] Document new APIs
-
-### Project Documentation
-- [ ] Update main README.md
-- [ ] Update component.md architecture doc
-- [ ] Add setup/configuration docs
 
 ## Dependencies
 
@@ -221,10 +217,10 @@ result = new_feature.do_something()
 
 ```python  
 # Example 2: Advanced usage
-from mail_client_api import get_client
+from app.dependencies import get_document_storage
 
-client = get_client()
-advanced_result = client.advanced_feature(
+storage = get_document_storage()
+advanced_result = storage.advanced_feature(
     param1="value1",
     param2="value2"
 )
