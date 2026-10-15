@@ -1,0 +1,1 @@
+"""Document storage agent application."""

@@ -1,228 +1,289 @@
-# Python Application Template: A Component-Based Mail Client
-## Fall 2026 Open Source Project Repo
-## Contributors
--   **Dayana Alejandro**
--   **Shini Agarwal**
--   **Annie Jain**
--   **Laya Mangalagiri**
--   **Yashwanth Kasanneni**
+# Document Storage Agent
 
-[![CircleCI](https://circleci.com/gh/ivanearisty/oss-taapp.svg?style=shield)](https://circleci.com/gh/ivanearisty/oss-taapp)
-[![Coverage](https://img.shields.io/badge/coverage-85%2B%25-brightgreen)](https://circleci.com/gh/ivanearisty/oss-taapp)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
-This repository serves as a professional-grade template for a modern Python project. It demonstrates a robust, component-based architecture by building the core components for an AI-powered email assistant that interacts with the Gmail API.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files` and `GET /files/metadata` are built. The Dropbox `download` method still raises `NotImplementedError`.
 
-The project emphasizes a strict separation of concerns, dependency injection, and a comprehensive, automated toolchain to enforce code quality and best practices.
+## Base
 
-## Architectural Philosophy
+`DocumentStorage` (`app/providers/base.py`):
 
-This project is built on the principle of "programming integrated over time." The architecture is designed to combat complexity and ensure the system is maintainable and evolvable.
+| Method | Returns |
+| --- | --- |
+| `upload(path, content)` | `FileResource` |
+| `get_metadata(path)` | `FileResource` |
+| `download(path)` | `bytes` |
+| `move(path, new_path)` | `FileResource` |
+| `delete(path)` | `None` |
 
--   **Component-Based Design:** The system is broken down into four distinct, self-contained components. Each component has a single responsibility and can be "forklifted" out of this project to be used in another with minimal effort.
--   **Interface-Implementation Separation:** Every piece of functionality is defined by an abstract **contract** implemented as an ABC (the "what") and fulfilled by a concrete **implementation** (the "how"). This decouples our business logic from specific technologies (like Gmail).
--   **Dependency Injection:** Implementations are "injected" into the abstract contracts at runtime. This means consumers of the API only ever depend on the stable interface, not the volatile implementation details.
+`FileResource` (`app/models/file.py`) has `id`, `name`, `path`, `size`, and optional `modified_at`.
 
-## Core Components
+Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundError` from there. `app/main.py` returns:
 
-The project is a `uv` workspace containing four primary packages:
-
-3.  **`mail_client_api`**: Defines the abstract `Client` base class (ABC). This is the contract for what actions a mail client can perform (e.g., `get_messages`).
-4.  **`gmail_client_impl`**: Provides the `GmailClient` class, a concrete implementation that uses the Google API to perform the actions defined in the `Client` abstraction.
-
-## Project Structure
-
-```
-ta-assignment/
-├── src/                          # Source packages (uv workspace members)
-│   ├── mail_client_api/          # Abstract mail client base class (ABC)  
-│   └── gmail_client_impl/        # Gmail-specific client implementation
-├── tests/                        # Integration and E2E tests
-│   ├── integration/              # Component integration tests
-│   └── e2e/                      # End-to-end application tests
-├── docs/                         # Documentation source files
-├── .circleci/                    # CircleCI configuration
-├── main.py                       # Main application entry point
-├── pyproject.toml               # Project configuration (dependencies, tools)
-├── uv.lock                      # Locked dependency versions
-└── credentials.json             # Google OAuth credentials (local only)
+```json
+{ "error": { "code": "not_found", "message": "..." } }
 ```
 
-## Project Setup
+| Exception | Status | Code |
+| --- | --- | --- |
+| `InvalidRequestError` | 400 | `invalid_request` |
+| `PermissionDeniedError` | 403 | `permission_denied` |
+| `FileNotFoundError` | 404 | `not_found` |
+| `FileConflictError` | 409 | `conflict` |
+| `ProviderError` | 502 | `provider_error` |
 
-### 1. Prerequisites
+## Storage
 
--   Python 3.11 or higher
--   `uv` – A fast, all-in-one Python package manager.
+- `get_document_storage()` creates a Dropbox client from `DROPBOX_ACCESS_TOKEN` and returns `DropboxStorage`.
+- `to_file_resource()` maps Dropbox file metadata onto `FileResource`.
+- `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the shared exceptions above.
+- `FakeDocumentStorage` (`tests/fakes.py`) keeps files in memory and raises `FileNotFoundError` for a missing path.
 
-### 2. Initial Setup
+## Using this for CRUD
 
-1.  **Install `uv`:**
-    ```bash
-    # macOS / Linux
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    # Windows (PowerShell)
-    irm https://astral.sh/uv/install.ps1 | iex
-    ```
+Add a route module under `app/api/routes/` and include it from `app/api/router.py`, the same way `health` is included. Inject storage with `Depends(get_document_storage)`. Call the `DocumentStorage` method and return the result. Let the shared exceptions propagate. `app/main.py` already turns them into the JSON error body.
 
-2.  **Clone the Repository:**
-    ```bash
-    git clone <your-repository-url>
-    cd ta-assignment
-    ```
+```python
+from fastapi import APIRouter, Depends
 
-3.  **Set Up Google Credentials:**
-    -   Follow the [Google Cloud instructions](https://developers.google.com/gmail/api/quickstart/python#authorize_credentials_for_a_desktop_application) to enable the Gmail API and download your OAuth 2.0 credentials.
-    -   Rename the downloaded file to `credentials.json` and place it in the root of this project.
-    -   **Alternative**: For CI/CD environments, you can use environment variables instead:
-        ```bash
-        export GMAIL_CLIENT_ID="your_client_id"
-        export GMAIL_CLIENT_SECRET="your_client_secret"
-        export GMAIL_REFRESH_TOKEN="your_refresh_token"
-        ```
-    -   **Important:** Credential files contain secrets and are ignored by `.gitignore`.
+from app.dependencies import get_document_storage
+from app.models.file import FileResource
+from app.providers.base import DocumentStorage
 
-4.  **Create and Sync the Virtual Environment:**
-    This single command creates a `.venv` folder and installs all packages (including workspace members and development tools) defined in `uv.lock`.
-    ```bash
-    uv sync --all-packages --extra dev
-    ```
+router = APIRouter()
 
-5.  **Activate the Virtual Environment:**
-    ```bash
-    # macOS / Linux
-    source .venv/bin/activate
-    # Windows (PowerShell)
-    .venv\Scripts\Activate.ps1
-    ```
 
-6.  **Perform Initial Authentication:**
-    Run the main application once to perform the interactive OAuth flow. This will open a browser window for you to grant permission.
-    ```bash
-    uv run python main.py
-    ```
-    After you approve, a `token.json` file will be created. This file is also ignored by `.gitignore` and will be used for authentication in subsequent runs.
+@router.get("/files/metadata")
+def read_metadata(
+    path: str,
+    storage: DocumentStorage = Depends(get_document_storage),
+) -> FileResource:
+    return storage.get_metadata(path)
+```
 
-## Development Workflow
+| Action | Call |
+| --- | --- |
+| Create | `storage.upload(path, content)` |
+| Read metadata | `storage.get_metadata(path)` |
+| Read bytes | `storage.download(path)` |
+| Update path | `storage.move(path, new_path)` |
+| Delete | `storage.delete(path)` |
 
-All commands should be run from the project root with the virtual environment activated.
+Fill in the matching method on `DropboxStorage`. Use `self.client` for the Dropbox call, `to_file_resource()` for metadata, and **raise** the translator result so the HTTP handlers run:
 
-### Running the Application
+```python
+from dropbox.exceptions import ApiError, DropboxException
 
-To run the main demonstration script:
+from app.providers.dropbox.error_mapping import (
+    translate_dropbox_exception,
+    translate_lookup_error,
+)
+
+try:
+    metadata = self.client.files_get_metadata(path)
+except ApiError as exc:
+    if exc.error.is_path():
+        raise translate_lookup_error(exc.error.get_path(), path) from exc
+    raise translate_dropbox_exception(exc) from exc
+except DropboxException as exc:
+    raise translate_dropbox_exception(exc) from exc
+
+return self.to_file_resource(metadata)
+```
+
+Use `translate_lookup_error` when a Dropbox lookup fails, and `translate_write_error` when a write fails. Tests should override `get_document_storage` with `FakeDocumentStorage` so they never call Dropbox. `tests/test_storage_foundation.py` shows that override.
+
+## Upload a file
+
+`POST /files` (form data) returns `201 Created`.
+
+Saves a new file to the Dropbox app folder and returns its metadata. If a file already exists at that path, nothing is changed and you get `409`.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `file` | yes | The file to upload |
+| `path` | yes | Where to save it, e.g. `/docs/report.pdf` |
+
+Example response:
+
+```json
+{
+  "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+  "name": "report.pdf",
+  "path": "/docs/report.pdf",
+  "size": 20483,
+  "modified_at": "2026-10-05T14:30:00"
+}
+```
+
+Errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB |
+| 403 | `permission_denied` | Token can't write to Dropbox |
+| 409 | `conflict` | A file already exists at `path` |
+| 502 | `provider_error` | Dropbox failed |
+
+Try it:
+
 ```bash
-uv run python main.py
+curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs/report.pdf"
 ```
 
-### Running the Toolchain
+How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
 
--   **Linting & Formatting (Ruff):**
-    The project uses Ruff with comprehensive rules configured in `pyproject.toml`.
-    ```bash
-    # Check for issues
-    uv run ruff check .
-    # Automatically fix issues
-    uv run ruff check . --fix
-    # Check formatting
-    uv run ruff format --check .
-    # Apply formatting
-    uv run ruff format .
-    ```
+## Update (rename or move) a file
 
--   **Static Type Checking (MyPy):**
-    ```bash
-    uv run mypy src tests
-    ```
+`PATCH /files?path=...` with a JSON body returns `200 OK` and the file's new metadata.
 
--   **Testing (Pytest):**
+Renames or moves the file at `path` to `new_path`. The file keeps the same `id` and content. Missing parent folders in `new_path` are created by Dropbox. Folders are refused with `400`, because Dropbox would move everything inside them. An existing file at `new_path` is never overwritten: you get `409` and nothing changes.
 
-    I'd recommend only running: `uv run pytest src/ tests/ -m "not local_credentials" -v` for simplicity.
+| Field | Where | Required | Description |
+| --- | --- | --- | --- |
+| `path` | query | yes | The file to move, e.g. `/docs/report.pdf` |
+| `new_path` | JSON body | yes | Where it should end up, e.g. `/archive/report.pdf`. Must differ from `path` by more than letter case. Dropbox does not support case-only renames like `/a.pdf` -> `/A.pdf`. |
 
-    The project uses a comprehensive testing strategy with different test categories.
-    ```bash
-    # Run all tests (includes unit, integration, and e2e tests)
-    uv run pytest
+Example response:
 
-    # Run only unit tests (fast, no external dependencies - from src/ directories)
-    uv run pytest src/
+```json
+{
+  "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+  "name": "report.pdf",
+  "path": "/archive/report.pdf",
+  "size": 20483,
+  "modified_at": "2026-10-05T14:30:00"
+}
+```
 
-    # Run all tests except those requiring local credential files
-    uv run pytest src/ tests/ -m "not local_credentials"
+Errors:
 
-    # Run only integration tests (requires environment variables or credentials)
-    uv run pytest -m integration
+| Status | Code | When | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`/`new_path`, `new_path` equals `path` ignoring case, `path` is a folder, or Dropbox refuses the name | No, fix the input |
+| 403 | `permission_denied` | Token can't move this file or write to `new_path` | No |
+| 404 | `not_found` | Nothing exists at `path` | No |
+| 409 | `conflict` | Something already exists at `new_path` | No, pick another `new_path` |
+| 502 | `provider_error` | Dropbox failed or is rate limiting | Yes, but first check whether the file already moved (a repeat returns `404` if it did) |
 
-    # Run only end-to-end tests (requires credentials)
-    uv run pytest -m e2e
+Repeating a successful move returns `404`, because the file is no longer at `path`.
 
-    # Run only CircleCI-compatible tests (CI/CD environment)
-    uv run pytest -m circleci
+Try it:
 
-    # Run tests with coverage reporting
-    uv run pytest --cov=src --cov-report=term-missing
-    ```
-
-### Viewing Documentation
-
-This project uses MkDocs for documentation.
 ```bash
-# Start the live-reloading documentation server
-uv run mkdocs serve
+curl -i -X PATCH "http://127.0.0.1:8000/files?path=/docs/report.pdf" \
+  -H "Content-Type: application/json" -d '{"new_path": "/archive/report.pdf"}'
 ```
-Open your browser to `http://127.0.0.1:8000` to view the site.
 
-## Testing Infrastructure
+How it works: the route checks both paths with `validate_path` and rejects a `new_path` that matches `path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `path`. Destination errors (`to`) are translated against `new_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
 
-The project implements a sophisticated testing strategy designed for both local development and CI/CD environments:
+## Delete a file
 
-### Test Categories
+`DELETE /files?path=...` returns `204 No Content` with no body.
 
-- **Unit Tests** (`src/*/tests/`): Fast, isolated tests with mocked dependencies
-- **Integration Tests** (`tests/integration/`): Tests that verify component interactions
-- **End-to-End Tests** (`tests/e2e/`): Full application workflow tests
-- **CircleCI Tests**: CI/CD-compatible tests that handle missing credentials gracefully
-- **Local Credentials Tests**: Tests that require `credentials.json` or `token.json` files
+Deletes the file at `path` from the Dropbox app folder. Folders are refused with `400`, because Dropbox would delete everything inside them. The first delete of a path returns `204`. Deleting the same path again returns `404`, because nothing is there any more.
 
-### Test Markers
+Errors:
 
-The project uses pytest markers to categorize tests:
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`, or `path` is a folder |
+| 403 | `permission_denied` | Token can't delete this path |
+| 404 | `not_found` | Nothing exists at `path` |
+| 502 | `provider_error` | Dropbox failed |
+
+Try it:
+
 ```bash
-@pytest.mark.unit              # Fast unit tests
-@pytest.mark.integration       # Integration tests
-@pytest.mark.e2e              # End-to-end tests
-@pytest.mark.circleci         # CI/CD compatible
-@pytest.mark.local_credentials # Requires local auth files
+curl -i -X DELETE "http://127.0.0.1:8000/files?path=/docs/report.pdf"
 ```
 
-### Authentication in Tests
+How it works: the route checks `path` with the same `validate_path` as upload and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
 
-The testing infrastructure handles different authentication scenarios:
-- **Local Development**: Uses `credentials.json` and `token.json` files
-- **CI/CD Environment**: Uses environment variables (`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`)
-- **Missing Credentials**: Tests fail fast with clear error messages (no hanging)
+## Tests
 
-## Continuous Integration
+```powershell
+pytest
+```
 
-The project includes a comprehensive CircleCI configuration (`.circleci/config.yml`) with:
+The real Dropbox test is skipped if `DROPBOX_ACCESS_TOKEN` is not set. To run it:
 
-- **All Branches**: Unit tests, linting, and CI-compatible tests
-- **Main/Develop**: Additional integration tests with real Gmail API calls
-- **Artifacts**: Coverage reports, test results, and build summaries
+```powershell
+pytest tests/integration -v
+```
 
-See `docs/circleci-setup.md` for detailed CI/CD setup instructions.
+Latest run: **70 passed, 4 skipped** (the real Dropbox tests skip without a token).
 
-## Development Workflow
+| File | What it checks |
+| --- | --- |
+| `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
+| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
+| `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
+| `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
+| `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
+| `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
+| `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
+| `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: correct call and error mapping |
+| `test_update.py` | `PATCH /files` with the fake storage: success, content kept and old path gone, case-only rename refused, repeated move, missing file, 409 without overwrite, invalid input never reaches storage, Dropbox errors |
+| `test_dropbox_update.py` | `DropboxStorage.move` with a mocked Dropbox client: correct call, folder refused, error mapping for source and destination |
+| `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
+| `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
 
-### Quick Start
-1. **Install dependencies**: `uv sync --all-packages --extra dev`
-2. **Run tests**: `uv run pytest tests/ -v` or `uv run pytest src/ tests/ -m "not local_credentials" -v`
-3. **Check code quality**: `uv run ruff check . && uv run ruff format --check .`
-4. **Fix formatting**: `uv run ruff format .`
-5. **View documentation**: `uv run mkdocs serve`
+`GET /files/metadata` exists only inside `test_storage_foundation.py`.
 
-### Best Practices
-- Run unit tests (`uv run pytest src/`) during development for fast feedback
-- Use integration tests (`uv run pytest -m integration`) to verify component interactions
-- Run full test suite (`uv run pytest`) before pushing to ensure CI compatibility
-- The CircleCI pipeline provides automated validation on every push
+## Layout
+
+```
+app/
+├── main.py                 # App and error handlers
+├── dependencies.py         # get_document_storage()
+├── errors.py
+├── api/routes/            # health, upload, update, delete
+├── models/file.py
+└── providers/
+    ├── base.py             # DocumentStorage
+    └── dropbox/            # client, storage, error_mapping
+scripts/verify_dropbox.py
+tests/                      # fakes and the tests above
+```
+
+## Setup
+
+Python 3.10 or newer. Copy `.env.example` to `.env` and fill it in. `.env` stays local.
+
+```powershell
+python -m venv doc
+.\doc\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+```
+
+```bash
+python -m venv doc
+source doc/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `APP_NAME` | API title |
+| `DROPBOX_APP_KEY` | Dropbox app key |
+| `DROPBOX_APP_SECRET` | Dropbox app secret |
+| `DROPBOX_ACCESS_TOKEN` | Token used to create the Dropbox client |
+
+## Run
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+
+Check the Dropbox token with:
+
+```powershell
+python -m scripts.verify_dropbox
+```
+
+A working token prints the account ID and display name.
