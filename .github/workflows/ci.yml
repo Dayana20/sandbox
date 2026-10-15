@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, yashwanth]
+  pull_request:
+    branches: [main, yashwanth]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # No Dropbox token is set here. Live Dropbox tests under
+      # tests/integration are not part of a plain `pytest`.
+      - name: Tests
+        run: pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy app

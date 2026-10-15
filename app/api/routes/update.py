@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, Depends
 
-from app.api.routes.upload import validate_path
+from app.validation import validate_path
 from app.dependencies import get_document_storage
 from app.errors import InvalidRequestError
 from app.models.file import FileResource
