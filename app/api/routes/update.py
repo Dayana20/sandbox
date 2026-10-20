@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Body, Depends
 
+from app.api.responses import error_responses
 from app.validation import validate_path
 from app.dependencies import get_document_storage
 from app.errors import InvalidRequestError
@@ -13,7 +14,7 @@ router = APIRouter(
 )
 
 
-@router.patch("")
+@router.patch("", responses=error_responses(400, 403, 404, 409, 502, 503))
 def move_file(
     path: str | None = None,
     new_path: str | None = Body(None, embed=True),

@@ -30,7 +30,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - Routes get storage with `Depends(get_document_storage)`. Don't create a Dropbox client inside a route.
 - Only code in `app/providers/dropbox/` calls the Dropbox SDK.
 - Dropbox errors must be turned into `app/errors.py` errors before they leave `DropboxStorage`, raised `from` the Dropbox exception. Put `@logs_dropbox_errors` on every `DropboxStorage` method.
-- Never log tokens, file contents or Dropbox's free-text messages.
+- Never log file paths, tokens, file contents or Dropbox's free-text messages.
 - File endpoints return `FileResource`, never raw Dropbox objects.
 - Don't overwrite or auto-rename files. Uploads and moves onto an existing path return `409`.
 - Never commit `.env`, tokens or keys.
@@ -54,7 +54,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 1. Add the method to `DocumentStorage` in `app/providers/base.py` if it is new.
 2. Implement it in `DropboxStorage` and `FakeDocumentStorage`.
-3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`.
+3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`. List the errors it can return with `responses=error_responses(...)` from `app/api/responses.py`, so `/docs` matches the README.
 4. Add route tests, a mocked Dropbox test and an integration test.
 5. Document the endpoint in README.md.
 

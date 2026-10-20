@@ -130,18 +130,17 @@ Paths are not normalized or lower-cased; the service passes them to Dropbox exac
 When Dropbox fails, the caller gets a short error like `File not found: /docs/a.pdf`. The original Dropbox error is written to the server log instead, one line per failure, by the `logs_dropbox_errors` decorator in `app/providers/dropbox/error_mapping.py`:
 
 ```
-dropbox_error operation=get_metadata path=/docs/a.pdf error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
+dropbox_error operation=get_metadata error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `operation` | The `DropboxStorage` method that failed |
-| `path` | The path it was called with (the source path for a move) |
 | `error` | The error we returned to the caller |
 | `dropbox_error` | The Dropbox exception class, plus the typed Dropbox error for API and auth errors |
 | `request_id` | Dropbox's id for the request, useful when asking Dropbox support |
 
-`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. The token, file contents and Dropbox's free-text messages are never logged. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
+`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. File paths are not logged, because file names can contain private information. The token, file contents and Dropbox's free-text messages are never logged either. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
 
 ## Upload a file
 

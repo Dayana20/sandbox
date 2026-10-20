@@ -6,7 +6,6 @@ from dropbox.exceptions import ApiError, AuthError, InternalServerError
 from dropbox.files import FolderMetadata, GetMetadataError, LookupError, UploadError, UploadWriteFailed, WriteError, WriteConflictError
 
 from app.errors import FileConflictError, FileNotFoundError, InvalidRequestError, PermissionDeniedError, ProviderError
-from app.providers.dropbox.error_mapping import logs_dropbox_errors
 from app.providers.dropbox.storage import DropboxStorage
 
 
@@ -31,7 +30,7 @@ def test_lookup_failure_is_logged_with_dropbox_detail(caplog):
     message = record.getMessage()
     assert record.levelno == logging.WARNING
     assert "operation=get_metadata" in message
-    assert "path=/docs/missing.pdf" in message
+    assert "missing.pdf" not in message
     assert "error=FileNotFoundError" in message
     assert "not_found" in message
     assert "request_id=req-123" in message
@@ -86,7 +85,7 @@ def test_auth_failure_is_logged_without_token(caplog):
     assert token not in caplog.text
 
 
-def test_move_failure_is_logged_with_source_path(caplog):
+def test_move_failure_is_logged_without_paths(caplog):
     client = Mock()
     client.files_get_metadata.side_effect = ApiError(
         "req-7", GetMetadataError.path(LookupError.not_found), None, None
@@ -98,21 +97,7 @@ def test_move_failure_is_logged_with_source_path(caplog):
 
     [record] = dropbox_records(caplog)
     assert "operation=move" in record.getMessage()
-    assert "path=/docs/a.pdf" in record.getMessage()
-
-
-def test_path_is_found_by_name_not_position(caplog):
-    @logs_dropbox_errors
-    def method_with_path_second(self, new_path, path):
-        raise FileNotFoundError("missing") from ApiError(
-            "req-8", GetMetadataError.path(LookupError.not_found), None, None
-        )
-
-    with caplog.at_level(logging.WARNING, logger=LOGGER), pytest.raises(FileNotFoundError):
-        method_with_path_second(None, "/archive/a.pdf", "/docs/a.pdf")
-
-    [record] = dropbox_records(caplog)
-    assert "path=/docs/a.pdf" in record.getMessage()
+    assert "a.pdf" not in record.getMessage()
 
 
 def test_our_own_refusal_is_not_logged_as_dropbox_error(caplog):

@@ -1,5 +1,4 @@
 import functools
-import inspect
 import logging
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar
@@ -39,12 +38,11 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         errors raised `from` a Dropbox exception are logged. Checks we make
         ourselves, like refusing a folder, are not Dropbox failures.
 
-        Logs one line per failure with the operation, the path, our error
-        type, the Dropbox error and Dropbox's request id. It never logs the
-        token, file contents, or Dropbox's free-text messages.
+        Logs one line per failure with the operation, our error type, the
+        Dropbox error and Dropbox's request id. It never logs file paths
+        (file names can be private), the token, file contents, or Dropbox's
+        free-text messages.
     """
-
-    signature = inspect.signature(method)
 
     @functools.wraps(method)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -53,10 +51,7 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         except StorageError as exc:
             cause = exc.__cause__
             if isinstance(cause, DropboxException):
-                # Look the path up by name, so it is still right if a
-                # method's parameters are reordered or passed by keyword
-                path = signature.bind(*args, **kwargs).arguments.get("path")
-                _log_dropbox_error(method.__name__, path, exc, cause)
+                _log_dropbox_error(method.__name__, exc, cause)
             raise
 
     return wrapper
@@ -64,7 +59,6 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
 
 def _log_dropbox_error(
     operation: str,
-    path: object,
     error: StorageError,
     cause: DropboxException,
 ) -> None:
@@ -83,9 +77,8 @@ def _log_dropbox_error(
 
     logger.log(
         level,
-        "dropbox_error operation=%s path=%s error=%s dropbox_error=%s request_id=%s",
+        "dropbox_error operation=%s error=%s dropbox_error=%s request_id=%s",
         operation,
-        path,
         type(error).__name__,
         dropbox_error,
         cause.request_id,
