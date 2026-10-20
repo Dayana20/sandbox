@@ -16,7 +16,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
+- `app/idempotency/` - upload `Idempotency-Key` support, independent of the provider: `IdempotencyService` (state machine), `RedisIdempotencyStore`, and the Redis client factory
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes, and `get_idempotency_service()`
 - `app/validation.py` - `validate_path()`, the path check every route uses
 - `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
@@ -30,7 +31,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - Routes get storage with `Depends(get_document_storage)`. Don't create a Dropbox client inside a route.
 - Only code in `app/providers/dropbox/` calls the Dropbox SDK.
 - Dropbox errors must be turned into `app/errors.py` errors before they leave `DropboxStorage`, raised `from` the Dropbox exception. Put `@logs_dropbox_errors` on every `DropboxStorage` method.
-- Never log tokens, file contents or Dropbox's free-text messages.
+- Idempotency lives in `app/idempotency/`, never in `DropboxStorage` or the `DocumentStorage` interface. It fails closed: with an `Idempotency-Key` and no usable Redis, the upload must not run.
+- Never log tokens, file contents, Dropbox's free-text messages or raw idempotency keys.
 - File endpoints return `FileResource`, never raw Dropbox objects.
 - Don't overwrite or auto-rename files. Uploads and moves onto an existing path return `409`.
 - Never commit `.env`, tokens or keys.

@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
+    IdempotencyError,
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
@@ -131,6 +132,23 @@ def create_app() -> FastAPI:
                 }
             },
         )  
+
+    # Idempotency-Key problems. Each error carries its own status and code,
+    # and a fixed message that never shows Redis details or the caller's key.
+    @app.exception_handler(IdempotencyError)
+    async def handle_idempotency_error(
+        request: Request,
+        exc: IdempotencyError,
+    ):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+            },
+        )
 
     return app
 
