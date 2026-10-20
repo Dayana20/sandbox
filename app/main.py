@@ -1,3 +1,6 @@
+import logging
+import uuid
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,8 +13,82 @@ from app.errors import (
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
-    StorageNotConfiguredError
+    StorageError,
+    StorageNotConfiguredError,
 )
+
+
+logger = logging.getLogger("app.requests")
+
+REQUEST_ID_HEADER = "X-Request-ID"
+
+# Every error the API returns: exception -> (HTTP status, error code)
+ERRORS: dict[type[StorageError], tuple[int, str]] = {
+    InvalidRequestError: (400, "invalid_request"),
+    PermissionDeniedError: (403, "permission_denied"),
+    FileNotFoundError: (404, "not_found"),
+    FileConflictError: (409, "conflict"),
+    ProviderError: (502, "provider_error"),
+    StorageNotConfiguredError: (503, "provider_not_configured"),
+}
+
+
+def error_response(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    provider: bool,
+) -> JSONResponse:
+    """
+        Build the error body and log one line about the failed request.
+
+        The log has the operation, error code, HTTP status, whether the
+        storage provider was involved, and the request id. It does not log
+        the error message, query values, request body or any credentials.
+    """
+    route = request.scope.get("route")
+    operation = getattr(route, "name", None) or request.url.path
+    request_id = getattr(request.state, "request_id", None)
+
+    # 5xx means the request could not be completed on our side or the
+    # provider's. 4xx is a problem with the request itself.
+    level = logging.ERROR if status >= 500 else logging.WARNING
+    logger.log(
+        level,
+        "request_failed operation=%s error=%s status=%s provider=%s request_id=%s",
+        operation,
+        code,
+        status,
+        "yes" if provider else "no",
+        request_id,
+        extra={
+            "operation": operation,
+            "error_code": code,
+            "status": status,
+            "provider": provider,
+            "request_id": request_id,
+        },
+    )
+
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+            }
+        },
+    )
+
+
+def provider_involved(exc: StorageError) -> bool:
+    # Provider code raises our errors `from` the provider exception (see
+    # AGENTS.md), so a cause means the provider was called and failed.
+    # Errors from our own checks, like a bad path, have no cause.
+    if isinstance(exc, (ProviderError, StorageNotConfiguredError)):
+        return True
+    return exc.__cause__ is not None
 
 
 def create_app() -> FastAPI:
@@ -22,79 +99,30 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
-    @app.exception_handler(FileNotFoundError)
-    async def handle_not_found(
-        request: Request,
-        exc: FileNotFoundError,
-    ):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": {
-                    "code": "not_found",
-                    "message": str(exc),
-                }
-            },
-        )
+    # Give every request an id so a failure in the logs can be matched to
+    # the response the caller got. A caller can send its own X-Request-ID.
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):
+        request_id = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
+        request.state.request_id = request_id
 
-    @app.exception_handler(PermissionDeniedError)
-    async def handle_permission_denied(
-        request: Request,
-        exc: PermissionDeniedError,
-    ):
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": {
-                    "code": "permission_denied",
-                    "message": str(exc),
-                }
-            },
-        )
+        response = await call_next(request)
+        response.headers[REQUEST_ID_HEADER] = request_id
+        return response
 
-    @app.exception_handler(FileConflictError)
-    async def handle_conflict(
+    @app.exception_handler(StorageError)
+    async def handle_storage_error(
         request: Request,
-        exc: FileConflictError,
+        exc: StorageError,
     ):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": {
-                    "code": "conflict",
-                    "message": str(exc),
-                }
-            },
-        )
+        status, code = ERRORS.get(type(exc), (502, "provider_error"))
 
-    @app.exception_handler(ProviderError)
-    async def handle_provider_error(
-        request: Request,
-        exc: ProviderError,
-    ):
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "code": "provider_error",
-                    "message": str(exc),
-                }
-            },
-        )
-
-    @app.exception_handler(InvalidRequestError)
-    async def handle_invalid_request(
-        request: Request,
-        exc: InvalidRequestError,
-    ):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "invalid_request",
-                    "message": str(exc),
-                }
-            },
+        return error_response(
+            request,
+            status,
+            code,
+            str(exc),
+            provider_involved(exc),
         )
 
     # FastAPI rejects badly typed input (e.g. a number where a string is
@@ -107,30 +135,13 @@ def create_app() -> FastAPI:
         first = exc.errors()[0]
         field = ".".join(str(part) for part in first["loc"][1:]) or "request"
 
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "invalid_request",
-                    "message": f"{field}: {first['msg']}",
-                }
-            },
+        return error_response(
+            request,
+            400,
+            "invalid_request",
+            f"{field}: {first['msg']}",
+            provider=False,
         )
-
-    @app.exception_handler(StorageNotConfiguredError)
-    async def handle_storage_configured_error(
-        request: Request,
-        exc: StorageNotConfiguredError,
-    ):
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": {
-                    "code": "provider_not_configured",
-                    "message": str(exc),
-                }
-            },
-        )  
 
     return app
 
