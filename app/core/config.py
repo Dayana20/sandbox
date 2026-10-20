@@ -28,5 +28,14 @@ class Settings:
         "DROPBOX_APP_SECRET"
     )
 
+    # Metadata caching is on only when REDIS_URL is set.
+    redis_url: str | None = os.getenv(
+        "REDIS_URL"
+    )
+
+    metadata_cache_ttl_seconds: int = int(
+        os.getenv("METADATA_CACHE_TTL_SECONDS", "60")
+    )
+
 
 settings = Settings()
