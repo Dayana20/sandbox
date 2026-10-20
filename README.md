@@ -2,6 +2,8 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
+**Team 1:** Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni
+
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
 ## Base
@@ -38,6 +40,7 @@ Every failed request returns the same JSON shape, whichever endpoint it came fro
 | 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
 | 502 | `provider_error` | `ProviderError` | Dropbox failed, timed out, was unreachable, or rate limited us | Yes, after a short wait. For upload, move and delete, first check whether the change already happened |
 | 503 | `provider_not_configured` | `StorageNotConfiguredError` | The server has no Dropbox credentials set | Not until the server is configured |
+| 500 | `internal_error` | any other exception | A bug in the service. The message is always `Internal server error`; details stay in the server log | Maybe later; report it with the request id |
 
 The mapping lives in one place, `ERRORS` in `app/main.py`. Dropbox errors are turned into these exceptions inside `app/providers/dropbox/error_mapping.py`, so callers never see Dropbox exceptions or Dropbox error text.
 
@@ -61,7 +64,7 @@ request_failed operation=read_metadata error=not_found status=404 provider=no re
 | `provider` | `yes` if Dropbox was called and failed, `no` if our own checks rejected the request |
 | `request_id` | Same value as the `X-Request-ID` response header. A caller can send its own |
 
-4xx failures are logged at `WARNING`, 5xx at `ERROR`. The line has no error message, query values, request body or credentials, and no stack trace. When Dropbox was involved, the Dropbox-level detail is in the separate `dropbox_error` line below.
+4xx failures are logged at `WARNING`, 5xx at `ERROR`. Unexpected bugs (500) are logged separately as `internal_error method=... path=... status=500 error=<exception type> request_id=...`, without the exception message. The line has no error message, query values, request body or credentials, and no stack trace. When Dropbox was involved, the Dropbox-level detail is in the separate `dropbox_error` line below.
 
 ## Storage
 
@@ -76,7 +79,7 @@ request_failed operation=read_metadata error=not_found status=404 provider=no re
 | --- | --- |
 | Which code knows about Dropbox? | Only `app/providers/dropbox/` (`client.py`, `storage.py`, `error_mapping.py`) and the one place that picks the provider, `app/dependencies.py` |
 | Which code only uses our own types? | Routes in `app/api/routes/`, `app/models/file.py`, `app/errors.py`, `app/validation.py` |
-| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` builds the Dropbox client and returns a `DropboxStorage` |
+| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` returns a `DropboxStorage` around one Dropbox client that is created on first use and shared by every request |
 | How does it reach the routes? | Each route asks for `storage: DocumentStorage = Depends(get_document_storage)`. Routes never create it themselves |
 | How do tests swap it? | `app.dependency_overrides[get_document_storage] = lambda: FakeDocumentStorage()`. No network or credentials needed |
 | Where are Dropbox objects translated? | `DropboxStorage.to_file_resource()` turns Dropbox `FileMetadata` into our `FileResource`; `error_mapping.py` turns Dropbox errors into ours |
@@ -145,6 +148,7 @@ Every route that takes a file path checks it with `validate_path` from `app/vali
 | Rule | Rejected example |
 | --- | --- |
 | Required | missing or empty |
+| No control characters (newline, tab, null byte, ...) | `/docs/a\n.pdf` |
 | Starts with `/` | `docs/report.pdf` |
 | Ends with a file name, not `/` | `/docs/`, `/` |
 | No empty, `.` or `..` segments | `/docs//a.pdf`, `/docs/./a.pdf`, `/docs/../a.pdf` |
@@ -156,18 +160,17 @@ Paths are not normalized or lower-cased; the service passes them to Dropbox exac
 When Dropbox fails, the caller gets a short error like `File not found: /docs/a.pdf`. The original Dropbox error is written to the server log instead, one line per failure, by the `logs_dropbox_errors` decorator in `app/providers/dropbox/error_mapping.py`:
 
 ```
-dropbox_error operation=get_metadata path=/docs/a.pdf error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
+dropbox_error operation=get_metadata error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `operation` | The `DropboxStorage` method that failed |
-| `path` | The path it was called with (the source path for a move) |
 | `error` | The error we returned to the caller |
 | `dropbox_error` | The Dropbox exception class, plus the typed Dropbox error for API and auth errors |
 | `request_id` | Dropbox's id for the request, useful when asking Dropbox support |
 
-`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. The token, file contents and Dropbox's free-text messages are never logged. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
+`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. File paths are not logged, because file names can contain private information. The token, file contents and Dropbox's free-text messages are never logged either. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
 
 ## Upload a file
 
@@ -362,7 +365,7 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | File | What it checks |
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
-| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
+| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given, creates the client only once, and retries if credentials were missing. Dropbox is not called. |
 | `test_dropbox_client.py` | `create_dropbox_client()` uses the refresh token when set, falls back to an access token, and errors clearly when credentials are missing |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
@@ -394,7 +397,7 @@ mypy app
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main` and `yashwanth`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, `yashwanth` and `milestone-3`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
 
 ## Layout
 
@@ -421,6 +424,8 @@ requirements.txt
 
 Python 3.10 (pinned in `.python-version`; CI uses the same version). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
 
+Windows (PowerShell):
+
 ```powershell
 python -m venv doc
 .\doc\Scripts\Activate.ps1
@@ -428,12 +433,16 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
+macOS / Linux (bash or zsh):
+
 ```bash
 python -m venv doc
 source doc/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
+
+If you also have Anaconda installed, its `pytest`, `ruff` or `mypy` can run instead of the ones in `doc`. Run `python -m pytest` (and `python -m ruff`, `python -m mypy`) after activating `doc` to be sure you use the venv's copies.
 
 | Variable | Purpose |
 | --- | --- |
@@ -444,7 +453,14 @@ cp .env.example .env
 
 ### Dropbox credentials
 
-The app needs the `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write` permissions (Permissions tab in the App Console).
+Create a Dropbox app:
+
+1. Open the [Dropbox App Console](https://www.dropbox.com/developers/apps) and click **Create app**.
+2. Choose **Scoped access**, then **App folder** (the app can only see its own folder, `Apps/<app name>`), and give it any name.
+3. On the **Permissions** tab, tick `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write`, then click **Submit**.
+4. The **Settings** tab shows the **App key** and **App secret**.
+
+Then get a refresh token:
 
 1. Put `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` in `.env`.
 2. Run `python -m scripts.get_refresh_token`. Open the URL it prints, click Allow, and paste the code back.

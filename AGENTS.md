@@ -16,7 +16,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes. The Dropbox client is created once and shared (`get_dropbox_client()`)
 - `app/validation.py` - `validate_path()`, the path check every route uses
 - `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
@@ -30,7 +30,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - Routes get storage with `Depends(get_document_storage)`. Don't create a Dropbox client inside a route.
 - Only code in `app/providers/dropbox/` calls the Dropbox SDK.
 - Dropbox errors must be turned into `app/errors.py` errors before they leave `DropboxStorage`, raised `from` the Dropbox exception. Put `@logs_dropbox_errors` on every `DropboxStorage` method.
-- Never log tokens, file contents or Dropbox's free-text messages.
+- Never log file paths, tokens, file contents or Dropbox's free-text messages.
 - File endpoints return `FileResource`, never raw Dropbox objects.
 - Don't overwrite or auto-rename files. Uploads and moves onto an existing path return `409`.
 - Never commit `.env`, tokens or keys.
@@ -54,13 +54,13 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 1. Add the method to `DocumentStorage` in `app/providers/base.py` if it is new.
 2. Implement it in `DropboxStorage` and `FakeDocumentStorage`.
-3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`.
+3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`. List the errors it can return with `responses=error_responses(...)` from `app/api/responses.py`, so `/docs` matches the README.
 4. Add route tests, a mocked Dropbox test and an integration test.
 5. Document the endpoint in README.md.
 
 ## Contributing
 
-- Branch off `yashwanth`, open a PR into `yashwanth`. Don't push to it directly.
+- Branch off `milestone-3`, open a PR into `milestone-3`. Don't push to it directly. Don't merge anything into `main`, `yashwanth` or the `milestone-*-base` branches; they hold the submitted milestones.
 - A teammate reviews and someone other than the author merges.
 - Keep each PR to one feature. Don't mix in unrelated changes.
 - `pytest`, `ruff check .` and `mypy app` must pass before merging. CI runs all three.

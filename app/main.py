@@ -18,7 +18,8 @@ from app.errors import (
 )
 
 
-logger = logging.getLogger("app.requests")
+logger = logging.getLogger(__name__)
+request_logger = logging.getLogger("app.requests")
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -54,7 +55,7 @@ def error_response(
     # 5xx means the request could not be completed on our side or the
     # provider's. 4xx is a problem with the request itself.
     level = logging.ERROR if status >= 500 else logging.WARNING
-    logger.log(
+    request_logger.log(
         level,
         "request_failed operation=%s error=%s status=%s provider=%s request_id=%s",
         operation,
@@ -141,6 +142,33 @@ def create_app() -> FastAPI:
             "invalid_request",
             f"{field}: {first['msg']}",
             provider=False,
+        )
+
+    # Anything not handled above is a bug. Return a fixed message so the
+    # caller never sees the exception text, and keep the detail in the log.
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(
+        request: Request,
+        exc: Exception,
+    ):
+        # Method, path and exception type only. No query string, headers,
+        # body or exception message, which may hold paths or secrets.
+        logger.error(
+            "internal_error method=%s path=%s status=500 error=%s request_id=%s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            getattr(request.state, "request_id", None),
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": "Internal server error",
+                }
+            },
         )
 
     return app
