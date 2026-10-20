@@ -17,6 +17,10 @@ BAD_PATHS = [
     "/docs/./report.pdf",    # "." segment
     "/docs/../report.pdf",   # ".." segment
     "/..",
+    "/docs/report\n.pdf",    # newline
+    "/docs/report\x00.pdf",  # null byte
+    "/docs/report\t.pdf",    # tab
+    "/docs/report\x7f.pdf",  # delete character
 ]
 
 

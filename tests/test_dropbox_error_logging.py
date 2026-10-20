@@ -30,7 +30,7 @@ def test_lookup_failure_is_logged_with_dropbox_detail(caplog):
     message = record.getMessage()
     assert record.levelno == logging.WARNING
     assert "operation=get_metadata" in message
-    assert "path=/docs/missing.pdf" in message
+    assert "missing.pdf" not in message
     assert "error=FileNotFoundError" in message
     assert "not_found" in message
     assert "request_id=req-123" in message
@@ -85,7 +85,7 @@ def test_auth_failure_is_logged_without_token(caplog):
     assert token not in caplog.text
 
 
-def test_move_failure_is_logged_with_source_path(caplog):
+def test_move_failure_is_logged_without_paths(caplog):
     client = Mock()
     client.files_get_metadata.side_effect = ApiError(
         "req-7", GetMetadataError.path(LookupError.not_found), None, None
@@ -97,7 +97,7 @@ def test_move_failure_is_logged_with_source_path(caplog):
 
     [record] = dropbox_records(caplog)
     assert "operation=move" in record.getMessage()
-    assert "path=/docs/a.pdf" in record.getMessage()
+    assert "a.pdf" not in record.getMessage()
 
 
 def test_our_own_refusal_is_not_logged_as_dropbox_error(caplog):

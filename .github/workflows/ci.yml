@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, yashwanth]
+    branches: [main, yashwanth, milestone-3]
   pull_request:
-    branches: [main, yashwanth]
+    branches: [main, yashwanth, milestone-3]
 
 permissions:
   contents: read

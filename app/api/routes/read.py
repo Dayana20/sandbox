@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.api.responses import error_responses
 from app.validation import validate_path
 from app.dependencies import get_document_storage
 from app.models.file import FileResource
@@ -12,7 +13,7 @@ router = APIRouter(
 )
 
 
-@router.get("/metadata")
+@router.get("/metadata", responses=error_responses(400, 403, 404, 502, 503))
 def read_metadata(
     path: str | None = None,
     storage: DocumentStorage = Depends(get_document_storage),

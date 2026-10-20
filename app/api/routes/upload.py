@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from app.api.responses import error_responses
 from app.dependencies import get_document_storage
 from app.errors import InvalidRequestError
 from app.models.file import FileResource
@@ -15,7 +16,7 @@ router = APIRouter(
 )
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, responses=error_responses(400, 403, 409, 502, 503))
 def upload_file(
     file: UploadFile | None = File(None),
     path: str | None = Form(None),

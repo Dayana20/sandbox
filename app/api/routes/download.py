@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Response
 
+from app.api.responses import error_responses
 from app.dependencies import get_document_storage
 from app.providers.base import DocumentStorage
 from app.validation import validate_path
@@ -12,7 +13,7 @@ router = APIRouter(
 )
 
 
-@router.get("/download")
+@router.get("/download", responses=error_responses(400, 403, 404, 502, 503))
 def download_file(
     path: str | None = None,
     storage: DocumentStorage = Depends(get_document_storage),
