@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -105,16 +106,52 @@ def create_app() -> FastAPI:
         exc: RequestValidationError,
     ):
         first = exc.errors()[0]
-        field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+
+        # A body that isn't JSON at all has no field name, only a character
+        # position, which made the message read "1: JSON decode error".
+        if first["type"] == "json_invalid":
+            message = "request body is not valid JSON"
+        else:
+            field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+            message = f"{field}: {first['msg']}"
 
         return JSONResponse(
             status_code=400,
             content={
                 "error": {
                     "code": "invalid_request",
-                    "message": f"{field}: {first['msg']}",
+                    "message": message,
                 }
             },
+        )
+
+    # FastAPI answers an unknown URL (404) or a wrong method (405) itself,
+    # with {"detail": "..."}. Return our error shape instead, so a caller
+    # never has to handle two formats.
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(
+        request: Request,
+        exc: StarletteHTTPException,
+    ):
+        route = f"{request.method} {request.url.path}"
+
+        if exc.status_code == 404:
+            code, message = "not_found", f"No such endpoint: {route}"
+        elif exc.status_code == 405:
+            code, message = "method_not_allowed", f"Method not allowed: {route}"
+        else:
+            code, message = "http_error", str(exc.detail)
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": message,
+                }
+            },
+            # Keeps the Allow header FastAPI sets on a 405
+            headers=exc.headers,
         )
 
     @app.exception_handler(StorageNotConfiguredError)
