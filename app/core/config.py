@@ -28,5 +28,16 @@ class Settings:
         "DROPBOX_APP_SECRET"
     )
 
+    # Upload idempotency needs Redis. Without REDIS_URL, uploads that send an
+    # Idempotency-Key are refused (503). Uploads without a key never use Redis.
+    redis_url: str | None = os.getenv(
+        "REDIS_URL"
+    )
+
+    # How long an Idempotency-Key is remembered. Must be a positive number.
+    idempotency_ttl_seconds: int = int(
+        os.getenv("IDEMPOTENCY_TTL_SECONDS", "86400")
+    )
+
 
 settings = Settings()

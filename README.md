@@ -182,6 +182,7 @@ Saves a new file to the Dropbox app folder and returns its metadata. If a file a
 | --- | --- | --- |
 | `file` | yes | The file to upload |
 | `path` | yes | Where to save it, e.g. `/docs/report.pdf` |
+| `Idempotency-Key` (header) | no | Makes a retry safe. See [Upload idempotency](#upload-idempotency). Leave it out and nothing changes. |
 
 Example response:
 
@@ -199,10 +200,12 @@ Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, file over 150 MB, or an empty or over-long `Idempotency-Key` |
 | 403 | `permission_denied` | Token can't write to Dropbox |
 | 409 | `conflict` | A file already exists at `path` |
+| 409 | `idempotency_conflict`, `idempotency_in_progress`, `idempotency_outcome_unknown` | Only with an `Idempotency-Key`. See [Upload idempotency](#upload-idempotency) |
 | 502 | `provider_error` | Dropbox failed |
+| 503 | `idempotency_unavailable` | Only with an `Idempotency-Key`: Redis can't be used, so nothing was uploaded |
 
 Try it:
 
@@ -211,6 +214,130 @@ curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs
 ```
 
 How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
+
+## Upload idempotency
+
+`POST /files` can take an optional `Idempotency-Key` header so a client can retry an upload without risking a second upload.
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/files \
+  -H "Idempotency-Key: 7d9f1c2e-upload-report" \
+  -F "file=@report.pdf" -F "path=/docs/report.pdf"
+```
+
+```text
+FastAPI upload route
+      |
+      +--> IdempotencyService --> Redis
+      |
+      +--> DocumentStorage --> DropboxStorage --> Dropbox
+```
+
+Only upload has this. Metadata reads, downloads, moves and deletes do not. `DocumentStorage` and `DropboxStorage` know nothing about idempotency keys: the code is in `app/idempotency/` and is called from the upload route.
+
+### The contract
+
+| | |
+| --- | --- |
+| Header | `Idempotency-Key: <value>`, optional. With no header the upload behaves exactly as before and never touches Redis |
+| Key rules | 1 to 255 characters. An empty or longer key is `400 invalid_request` |
+| Scope | The whole service, for the upload operation. One key identifies one logical upload, whoever sends it |
+| Redis key | `document-storage:idempotency:upload:<SHA-256 of the key>`. The caller's key is never stored in Redis or logged. Logs show the first 12 characters of the hash as `key_id` |
+| Fingerprint | SHA-256 of canonical JSON `{"content_sha256": ..., "operation": "upload", "path": ..., "version": 1}`. So it covers the destination `path` and the file bytes. The file name and content type the client sends are not part of it, because the upload ignores them. The file itself is never stored |
+| Record | JSON with `state`, `fingerprint`, an internal `owner` token (see [Reservation ownership](#reservation-ownership)) and, once it has succeeded, the `FileResource` that was returned |
+| Retention | `IDEMPOTENCY_TTL_SECONDS`, default `86400` (24 hours). Redis expires the record. The timer starts when the key is reserved (`in_progress`) and restarts each time the state changes. It is not renewed while an upload runs, so it must be longer than the longest upload |
+
+States: `in_progress` (claimed, Dropbox being called), `succeeded` (Dropbox confirmed, result stored) and `uncertain` (Dropbox may have created the file, outcome unknown).
+
+### What each request gets
+
+| Request | State found | Result | Dropbox called? |
+| --- | --- | --- | --- |
+| New key | none | The upload runs. `201` | Yes, once |
+| Same key, same request | `succeeded` | The stored result, `201` | No |
+| Same key, different request | any | `409 idempotency_conflict` | No |
+| Same key, same request | `in_progress` | `409 idempotency_in_progress`. It does not wait | No |
+| Same key, same request | `uncertain` | `409 idempotency_outcome_unknown`: the original may have completed, so it is not repeated | No |
+| Any key | Redis can't be used | `503 idempotency_unavailable` | No |
+
+A different request means a different `path` or different bytes. A repeated key is checked against the fingerprint first, so a changed payload is always a conflict, whatever the state. The error messages are fixed. They never contain the key, a fingerprint, a file hash or a Redis message.
+
+### How an upload runs
+
+1. The route checks the file, the `path`, the key and the size, exactly as without a key. A request that fails here is refused before Redis or Dropbox are involved. It claims nothing, so it leaves no record. The caller can fix the input and use the same key.
+2. The route reads the file, computes the fingerprint and asks Redis to claim the key. The claim is one `SET ... NX EX`, and it stores a fresh random owner token in the record. Two overlapping requests cannot both claim it, so only one of them can reach Dropbox. A request that finds the key already taken gets no ownership.
+3. Only the request that claimed the key calls `storage.upload()`. Then, using its owner token for every change to the record:
+   - **Success:** the `FileResource` is stored and the key becomes `succeeded`.
+   - **Dropbox proves nothing was uploaded:** the record is deleted and the original error is returned. The same key can be used again. These are the only errors treated this way, because each is an answer Dropbox gave to this request: `invalid_request` (bad path or name), `permission_denied` and `conflict` (a file is already at the path).
+   - **Anything else** (`provider_error`, a network failure, an unexpected exception): Dropbox may have received and applied the upload. The key becomes `uncertain`, and the first caller still gets the original error. Retries get `idempotency_outcome_unknown` until the record expires. Nothing is retried automatically.
+
+### Reservation ownership
+
+Each successful claim stores an opaque, random owner token (`uuid4().hex`) in its record. The token identifies that one reservation, not the caller. It stays inside the service: it is never returned to a client and never logged. The only way another request could see it is by reading Redis directly.
+
+Saving `succeeded`, marking `uncertain` and releasing the record are applied only if the record in Redis still carries that request's token. The check and the change are one Redis Lua script, so nothing can change the record between them (there is no Python `GET` followed by `SET` or `DEL`). Without that, this could happen:
+
+```text
+A claims key K, then runs longer than the TTL, so A's record expires
+B claims K and creates a new in_progress record
+A finally finishes. Without ownership, A would overwrite or delete B's record.
+```
+
+With ownership, A's late change is skipped in every case:
+
+- **A succeeds late:** A still returns `201`. B's record is left as it is.
+- **A fails late** with an uncertain error: A still returns the provider error. It does not mark B's record `uncertain`.
+- **A fails late** with a definitive error (conflict, permission, bad request): A still returns that error. It does not delete B's record.
+- **No newer record exists** (A's record simply expired): nothing is recreated.
+
+Each skipped change is logged as `idempotency_state_update_skipped` with the operation, the transition that was attempted, the reason (`record_missing` or `owner_changed`) and the short `key_id`. The owner token, fingerprint, response and raw key are not logged.
+
+Ownership only stops an older request from corrupting a newer reservation. It does not stop the second upload itself: once A's record has expired, B is a new request and may upload (see the long-running upload limit below).
+
+### Redis unavailable (fails closed)
+
+When a key is supplied and Redis can't be used, the upload is refused with `503 idempotency_unavailable` and Dropbox is not called. Uploading anyway could create a duplicate while claiming it could not. "Can't be used" covers: `REDIS_URL` not set, Redis down or timing out, and a record we can't read. Redis messages are logged by exception type only and are never returned. Uploads without a key do not depend on Redis at all.
+
+This is the opposite of a cache, where a Redis failure is ignored. Here Redis is part of the correctness of the request.
+
+### Restarts and crashes
+
+Records live in Redis, not in the app, so an app restart forgets nothing: a new process sees the same `succeeded`, `uncertain` and `in_progress` records. If the process dies after the claim, the record stays `in_progress`. Dropbox may or may not have the file, so the upload is not run again. That key stays blocked until the record expires. We chose to risk blocking a retry instead of risking a second upload. There is no background cleanup.
+
+### Guarantees and limits
+
+What this application guarantees (the code in `app/idempotency/`, with tests):
+
+- While the Redis idempotency record is present and unexpired, one key never leads to a second Dropbox upload from this service: not for a repeat, an overlapping request, a restart, or an uncertain outcome. Once the record expires, reuse of the key is treated as a new request.
+- The protection window is only as long as the record. The TTL starts when the key is reserved (`in_progress`), so `IDEMPOTENCY_TTL_SECONDS` must be longer than the longest upload you expect.
+- A repeat with the same request returns the first result. Reusing a key for a different request is refused.
+- A request can only change or delete the record it claimed. If its record expired and another request claimed the key, the older request cannot overwrite, mark `uncertain`, or delete the newer reservation.
+- Requests refused locally leave no record. Failures Dropbox clearly rejected release the key.
+- Nothing is uploaded under a key when Redis can't enforce it.
+- Keys and file contents are never logged.
+
+What Redis provides: atomic `SET NX`, Lua scripts that run as one atomic step (our owner check plus change), and removing a record when its TTL runs out. Redis knows nothing about uploads. Dropbox provides `WriteMode.add` with `strict_conflict`, which refuses to overwrite a file at the same path. It has no idea about our keys. The idempotency guarantee comes from our integration, not from either of them.
+
+What it does not guarantee:
+
+- **After the TTL:** the record is gone, and the same key is a new request. The guarantee ends with the retention period, and it is not permanent.
+- **If Redis loses data** (restart without persistence, eviction, a flush): the records are gone and a retried key uploads again. This code does not configure Redis persistence. Use persistence and a no-eviction policy if you need the guarantee to survive that.
+- **Uncertain uploads:** they stay blocked, not resolved. We don't check whether the file exists.
+- **If Redis is slow when claiming:** a claim that Redis applied but whose answer timed out is reported as `503`. The key then stays `in_progress` until it expires, although nothing was uploaded. This errs on the side of no duplicates.
+- **If the result can't be saved** after a good upload: if Dropbox succeeds but the service cannot write the `succeeded` state to Redis, the original caller still receives `201`, because the upload really happened and reporting a failure would only invite a retry. The record is never falsely marked `succeeded`. It stays `in_progress` (with no stored response and no new TTL) until it expires, and the problem is logged as `idempotency_error operation=save_succeeded`. A later retry with the same key and request gets `409 idempotency_in_progress` and does not call Dropbox again, because the service cannot prove to that caller that the first upload was recorded. The cost is that the retry cannot get the stored result until the key expires.
+- **Long-running uploads:** the service does not renew an in-progress reservation while an upload is running. If an upload lasts longer than the configured TTL, the reservation may expire before the upload completes. A request with the same key that arrives after that finds no record, claims the key, and can start a second upload. There is no heartbeat, lease renewal or distributed lock. Set `IDEMPOTENCY_TTL_SECONDS` well above the longest upload. Ownership does not remove this limit: it does not stop the second upload. It only means that when the first upload finally finishes, it cannot overwrite, mark `uncertain` or delete the newer request's reservation (see Reservation ownership).
+- **Uploads with no key** are not protected at all.
+
+### Try it
+
+Fast tests use `fakeredis` (with `lupa`, which lets it run the Lua scripts) and need no Redis server (see Tests). To see it against a real Redis and Dropbox:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+python -m scripts.demo_idempotency      # uses REDIS_URL, default redis://localhost:6379/0
+```
+
+It uploads once, replays, sends a changed payload, simulates a restart and an unreachable Redis, and prints how many times Dropbox was asked to upload at each step. It deletes the Dropbox file and the Redis record afterwards.
 
 ## Get file metadata
 
@@ -377,6 +504,7 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | `test_dropbox_download.py` | `DropboxStorage.download` with a mocked Dropbox client: returned bytes and Dropbox error mapping |
 | `test_failure_logging.py` | One failure log line per failed request with operation, code, status, provider and request id; nothing logged on success; no secrets or messages in the log; caller's `X-Request-ID` reused |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
+| `test_upload_idempotency.py` | Upload with `Idempotency-Key`, using `fakeredis` and a counting fake provider: first request, replay with the provider called once, conflicting payload or path, overlapping requests (a blocked upload, no sleeps), a new service over the same Redis (restart), uncertain outcomes never retried, reservation ownership (a stale request cannot overwrite, mark uncertain or delete a newer reservation, and the owner check runs inside Redis), local rejections leaving no record, Dropbox's definitive errors releasing the key, Redis down or unset failing closed, TTL, no-key uploads unchanged, logs without the raw key |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
 | `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
@@ -404,15 +532,16 @@ mypy app
 ```
 app/
 ├── main.py                 # App and error handlers
-├── dependencies.py         # get_document_storage()
+├── dependencies.py         # get_document_storage(), get_idempotency_service()
 ├── errors.py
 ├── validation.py           # validate_path(), shared by every route
 ├── api/routes/            # health, upload, read, download, update, delete
+├── idempotency/            # upload Idempotency-Key: service, redis_store, redis_client
 ├── models/file.py
 └── providers/
     ├── base.py             # DocumentStorage
     └── dropbox/            # client, storage, error_mapping
-scripts/                    # verify_dropbox, get_refresh_token
+scripts/                    # verify_dropbox, get_refresh_token, demo_idempotency
 tests/                      # fakes and the tests above
 .github/workflows/ci.yml    # pytest, ruff, mypy
 pyproject.toml              # pytest, ruff, mypy settings
@@ -450,6 +579,8 @@ If you also have Anaconda installed, its `pytest`, `ruff` or `mypy` can run inst
 | `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` | From the Settings tab of your app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) |
 | `DROPBOX_REFRESH_TOKEN` | Used with the app key and secret to log in. It does not expire, so the app keeps working. See below. |
 | `DROPBOX_ACCESS_TOKEN` | Optional fallback, used only when no refresh token is set. A token generated in the App Console expires after about 4 hours. |
+| `REDIS_URL` | Only needed for uploads that send an `Idempotency-Key`, e.g. `redis://localhost:6379/0`. Without it those uploads get `503`. Other requests don't use Redis. |
+| `IDEMPOTENCY_TTL_SECONDS` | How long an Idempotency-Key is remembered. Default `86400` (24 hours). Must be a positive number. |
 
 ### Dropbox credentials
 

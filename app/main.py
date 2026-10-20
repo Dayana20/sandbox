@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
+    IdempotencyError,
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
@@ -200,6 +201,25 @@ def create_app() -> FastAPI:
                     "message": "Internal server error",
                 }
             },
+        )
+
+    # Idempotency-Key problems. Each error carries its own status and code,
+    # and a fixed message that never shows Redis details or the caller's key.
+    # They are not StorageErrors, so they are not in ERRORS. Registered for
+    # the base class, this handler is chosen before the catch-all above, so
+    # they never become a 500. provider=False: the provider was not asked
+    # (or not asked again), even when the error was raised from a Redis one.
+    @app.exception_handler(IdempotencyError)
+    async def handle_idempotency_error(
+        request: Request,
+        exc: IdempotencyError,
+    ):
+        return error_response(
+            request,
+            exc.status_code,
+            exc.code,
+            exc.message,
+            provider=False,
         )
 
     return app

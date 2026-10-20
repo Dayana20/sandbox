@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 
 from app.api.responses import error_responses
-from app.dependencies import get_document_storage
+from app.dependencies import get_document_storage, get_idempotency_service
 from app.errors import InvalidRequestError
+from app.idempotency.service import (
+    IdempotencyService,
+    upload_fingerprint,
+    validate_idempotency_key,
+)
 from app.models.file import FileResource
 from app.providers.base import DocumentStorage
 from app.validation import validate_path
@@ -20,17 +27,28 @@ router = APIRouter(
 def upload_file(
     file: UploadFile | None = File(None),
     path: str | None = Form(None),
+    idempotency_key: Annotated[str | None, Header()] = None,
     storage: DocumentStorage = Depends(get_document_storage),
+    idempotency: IdempotencyService = Depends(get_idempotency_service),
 ) -> FileResource:
     '''
     Upload a new file to cloud storage.
     Returns 409 if a file already exists at the path.
+
+    Send an Idempotency-Key header to make retries safe: the same key with
+    the same request returns the first result without uploading again.
+    Without the header nothing about the upload changes.
     '''
 
     if file is None:
         raise InvalidRequestError("file is required")
 
     path = validate_path(path)
+    # Check the key like the path: a bad one is refused here, before Redis
+    # or the provider are involved, so it leaves nothing behind.
+    if idempotency_key is not None:
+        validate_idempotency_key(idempotency_key)
+
     # After validating the path, check file.size before reading
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
         raise InvalidRequestError("File is larger than 150 MB")
@@ -39,4 +57,11 @@ def upload_file(
     if len(content) > MAX_UPLOAD_BYTES:
         raise InvalidRequestError("File is larger than 150 MB")
 
-    return storage.upload(path, content)
+    if idempotency_key is None:
+        return storage.upload(path, content)
+
+    return idempotency.run_upload(
+        idempotency_key,
+        upload_fingerprint(path, content),
+        lambda: storage.upload(path, content),
+    )
