@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-import app
 from app.api.router import api_router
 from app.core.config import settings
 from app.errors import (
