@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 from dropbox.exceptions import ApiError, RateLimitError
 from dropbox.files import FileMetadata, FolderMetadata, GetMetadataError, LookupError
+import requests
 
 from app.errors import (
     FileNotFoundError,
@@ -71,6 +72,26 @@ def test_get_dropbox_metadata_lookup_errors(error, expected):
 def test_get_dropbox_metadata_rate_limited():
     mock_client = Mock()
     mock_client.files_get_metadata.side_effect = RateLimitError("req", None, 1)
+    storage = DropboxStorage(client=mock_client)
+
+    with pytest.raises(ProviderError):
+        storage.get_metadata("/report.pdf")
+
+# make a mocked files_get_metadata raise requests.exceptions.ReadTimeout
+# mock should raise requests.exceptions.ReadTimeout
+def test_get_dropbox_metadata_request_exception():
+    mock_client = Mock()
+    mock_client.files_get_metadata.side_effect = requests.exceptions.ReadTimeout("Request timed out")
+    storage = DropboxStorage(client=mock_client)
+
+    with pytest.raises(ProviderError):
+        storage.get_metadata("/report.pdf")
+
+# assert DropboxStorage.get_metadata() raises the  ProviderError
+# mock should return requests.exceptions.ConnectionError
+def test_get_dropbox_metadata_dropbox_exception():
+    mock_client = Mock()
+    mock_client.files_get_metadata.side_effect = requests.exceptions.ConnectionError("Connection error")
     storage = DropboxStorage(client=mock_client)
 
     with pytest.raises(ProviderError):
