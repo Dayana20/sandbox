@@ -16,7 +16,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes. The Dropbox client is created once and shared (`get_dropbox_client()`)
 - `app/validation.py` - `validate_path()`, the path check every route uses
 - `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
@@ -60,7 +60,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 ## Contributing
 
-- Branch off `yashwanth`, open a PR into `yashwanth`. Don't push to it directly.
+- Branch off `milestone-3`, open a PR into `milestone-3`. Don't push to it directly. Don't merge anything into `main`, `yashwanth` or the `milestone-*-base` branches; they hold the submitted milestones.
 - A teammate reviews and someone other than the author merges.
 - Keep each PR to one feature. Don't mix in unrelated changes.
 - `pytest`, `ruff check .` and `mypy app` must pass before merging. CI runs all three.

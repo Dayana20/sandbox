@@ -6,6 +6,7 @@ from dropbox.exceptions import ApiError, AuthError, InternalServerError
 from dropbox.files import FolderMetadata, GetMetadataError, LookupError, UploadError, UploadWriteFailed, WriteError, WriteConflictError
 
 from app.errors import FileConflictError, FileNotFoundError, InvalidRequestError, PermissionDeniedError, ProviderError
+from app.providers.dropbox.error_mapping import logs_dropbox_errors
 from app.providers.dropbox.storage import DropboxStorage
 
 
@@ -97,6 +98,20 @@ def test_move_failure_is_logged_with_source_path(caplog):
 
     [record] = dropbox_records(caplog)
     assert "operation=move" in record.getMessage()
+    assert "path=/docs/a.pdf" in record.getMessage()
+
+
+def test_path_is_found_by_name_not_position(caplog):
+    @logs_dropbox_errors
+    def method_with_path_second(self, new_path, path):
+        raise FileNotFoundError("missing") from ApiError(
+            "req-8", GetMetadataError.path(LookupError.not_found), None, None
+        )
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER), pytest.raises(FileNotFoundError):
+        method_with_path_second(None, "/archive/a.pdf", "/docs/a.pdf")
+
+    [record] = dropbox_records(caplog)
     assert "path=/docs/a.pdf" in record.getMessage()
 
 

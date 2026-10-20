@@ -2,6 +2,8 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
+**Team 1:** Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni
+
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
 ## Base
@@ -47,7 +49,7 @@ Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundErro
 | --- | --- |
 | Which code knows about Dropbox? | Only `app/providers/dropbox/` (`client.py`, `storage.py`, `error_mapping.py`) and the one place that picks the provider, `app/dependencies.py` |
 | Which code only uses our own types? | Routes in `app/api/routes/`, `app/models/file.py`, `app/errors.py`, `app/validation.py` |
-| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` builds the Dropbox client and returns a `DropboxStorage` |
+| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` returns a `DropboxStorage` around one Dropbox client that is created on first use and shared by every request |
 | How does it reach the routes? | Each route asks for `storage: DocumentStorage = Depends(get_document_storage)`. Routes never create it themselves |
 | How do tests swap it? | `app.dependency_overrides[get_document_storage] = lambda: FakeDocumentStorage()`. No network or credentials needed |
 | Where are Dropbox objects translated? | `DropboxStorage.to_file_resource()` turns Dropbox `FileMetadata` into our `FileResource`; `error_mapping.py` turns Dropbox errors into ours |
@@ -116,6 +118,7 @@ Every route that takes a file path checks it with `validate_path` from `app/vali
 | Rule | Rejected example |
 | --- | --- |
 | Required | missing or empty |
+| No control characters (newline, tab, null byte, ...) | `/docs/a\n.pdf` |
 | Starts with `/` | `docs/report.pdf` |
 | Ends with a file name, not `/` | `/docs/`, `/` |
 | No empty, `.` or `..` segments | `/docs//a.pdf`, `/docs/./a.pdf`, `/docs/../a.pdf` |
@@ -333,7 +336,7 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | File | What it checks |
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
-| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
+| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given, creates the client only once, and retries if credentials were missing. Dropbox is not called. |
 | `test_dropbox_client.py` | `create_dropbox_client()` uses the refresh token when set, falls back to an access token, and errors clearly when credentials are missing |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
@@ -364,7 +367,7 @@ mypy app
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main` and `yashwanth`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, `yashwanth` and `milestone-3`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
 
 ## Layout
 
@@ -391,6 +394,8 @@ requirements.txt
 
 Python 3.10 (pinned in `.python-version`; CI uses the same version). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
 
+Windows (PowerShell):
+
 ```powershell
 python -m venv doc
 .\doc\Scripts\Activate.ps1
@@ -398,12 +403,16 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
+macOS / Linux (bash or zsh):
+
 ```bash
 python -m venv doc
 source doc/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
+
+If you also have Anaconda installed, its `pytest`, `ruff` or `mypy` can run instead of the ones in `doc`. Run `python -m pytest` (and `python -m ruff`, `python -m mypy`) after activating `doc` to be sure you use the venv's copies.
 
 | Variable | Purpose |
 | --- | --- |
@@ -414,7 +423,14 @@ cp .env.example .env
 
 ### Dropbox credentials
 
-The app needs the `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write` permissions (Permissions tab in the App Console).
+Create a Dropbox app:
+
+1. Open the [Dropbox App Console](https://www.dropbox.com/developers/apps) and click **Create app**.
+2. Choose **Scoped access**, then **App folder** (the app can only see its own folder, `Apps/<app name>`), and give it any name.
+3. On the **Permissions** tab, tick `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write`, then click **Submit**.
+4. The **Settings** tab shows the **App key** and **App secret**.
+
+Then get a refresh token:
 
 1. Put `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` in `.env`.
 2. Run `python -m scripts.get_refresh_token`. Open the URL it prints, click Allow, and paste the code back.

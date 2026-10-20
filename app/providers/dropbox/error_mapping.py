@@ -1,4 +1,5 @@
 import functools
+import inspect
 import logging
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar
@@ -43,6 +44,8 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         token, file contents, or Dropbox's free-text messages.
     """
 
+    signature = inspect.signature(method)
+
     @functools.wraps(method)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
@@ -50,8 +53,9 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         except StorageError as exc:
             cause = exc.__cause__
             if isinstance(cause, DropboxException):
-                # args[0] is the DropboxStorage instance, args[1] the path
-                path = args[1] if len(args) > 1 else kwargs.get("path")
+                # Look the path up by name, so it is still right if a
+                # method's parameters are reordered or passed by keyword
+                path = signature.bind(*args, **kwargs).arguments.get("path")
                 _log_dropbox_error(method.__name__, path, exc, cause)
             raise
 
