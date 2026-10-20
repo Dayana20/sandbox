@@ -11,6 +11,7 @@ from app.providers.dropbox.error_mapping import (
     translate_write_error,
 )
 
+from requests.exceptions import RequestException
 
 class DropboxStorage:
 
@@ -45,6 +46,8 @@ class DropboxStorage:
                 mute=True,
                 strict_conflict=True,
             )
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not upload: {path}") from exc
         except ApiError as exc:
             if exc.error.is_path():
                 raise translate_write_error(exc.error.get_path().reason, path) from exc
@@ -74,6 +77,8 @@ class DropboxStorage:
         """
         try:
             metadata = self.client.files_get_metadata(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not read metadata: {path}") from exc
         except ApiError as exc:
             if exc.error.is_path():
                 raise translate_lookup_error(exc.error.get_path(), path) from exc
@@ -105,6 +110,8 @@ class DropboxStorage:
         """
         try:
             metadata, response = self.client.files_download(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not download: {path}") from exc
         except ApiError as exc:
             if exc.error.is_path():
                 raise translate_lookup_error(exc.error.get_path(), path) from exc
@@ -137,6 +144,8 @@ class DropboxStorage:
         # Dropbox moves folders with everything inside, so check it is a file first
         try:
             metadata = self.client.files_get_metadata(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
         except ApiError as exc:
             if exc.error.is_path():
                 raise translate_lookup_error(exc.error.get_path(), path) from exc
@@ -151,6 +160,8 @@ class DropboxStorage:
         # or renamed. Dropbox returns a conflict error instead.
         try:
             result = self.client.files_move_v2(path, new_path, autorename=False)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not move: {path}") from exc
         except ApiError as exc:
             error = exc.error
             if error.is_from_lookup():
@@ -183,6 +194,8 @@ class DropboxStorage:
         # Dropbox deletes folders recursively, so check it is a file first
         try:
             metadata = self.client.files_get_metadata(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
         except ApiError as exc:
             raise translate_lookup_error(exc.error.get_path(), path) from exc
         except DropboxException as exc:
@@ -193,6 +206,8 @@ class DropboxStorage:
 
         try:
             self.client.files_delete_v2(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not delete: {path}") from exc
         except ApiError as exc:
             if exc.error.is_path_lookup():
                 raise translate_lookup_error(exc.error.get_path_lookup(), path) from exc

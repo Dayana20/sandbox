@@ -1,6 +1,7 @@
 import dropbox
 
 from app.core.config import settings
+from app.errors import StorageNotConfiguredError
 
 
 def dropbox_credentials_configured() -> bool:
@@ -15,7 +16,7 @@ def create_dropbox_client() -> dropbox.Dropbox:
     # short-lived access token whenever the current one runs out.
     if settings.dropbox_refresh_token:
         if not settings.dropbox_app_key or not settings.dropbox_app_secret:
-            raise RuntimeError(
+            raise StorageNotConfiguredError(
                 "DROPBOX_REFRESH_TOKEN needs DROPBOX_APP_KEY "
                 "and DROPBOX_APP_SECRET"
             )
@@ -32,7 +33,7 @@ def create_dropbox_client() -> dropbox.Dropbox:
             oauth2_access_token=settings.dropbox_access_token
         )
 
-    raise RuntimeError(
+    raise StorageNotConfiguredError(
         "Dropbox is not configured. Set DROPBOX_REFRESH_TOKEN, "
         "DROPBOX_APP_KEY and DROPBOX_APP_SECRET in .env"
     )

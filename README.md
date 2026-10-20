@@ -226,7 +226,7 @@ How it works: the route in `app/api/routes/read.py` checks `path` with `validate
 | --- | --- | --- |
 | `path` | yes | The file to download, e.g. `/docs/report.pdf` |
 
-The route returns the bytes without setting a file-specific MIME type or `Content-Disposition` filename. Clients should choose the local filename when saving the response.
+The response returns the original file bytes with `Content-Type: application/octet-stream` and `Content-Disposition: attachment`. The filename is taken from the final segment of the requested path. `Content-Disposition` includes an ASCII `filename` fallback (unsafe or non-ASCII characters are replaced with `_`) and a UTF-8, percent-encoded `filename*` value so clients that support it can use the original filename.
 
 Errors:
 

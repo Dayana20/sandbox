@@ -137,6 +137,11 @@ def translate_lookup_error(
             f"Access denied: {path}"
         )
 
+    if error.is_not_file():
+        return InvalidRequestError(
+            f"Path is not a file: {path}"
+        )
+
     return ProviderError(
         f"Unable to access file: {path}"
     )

@@ -28,6 +28,8 @@ def test_download_file(storage):
 
     assert response.status_code == 200
     assert response.content == b'hello world'
+    assert response.headers["Content-Disposition"] == 'attachment; filename="test.pdf";filename*=UTF-8\'\'test.pdf'
+    assert response.headers["Content-Type"] == "application/octet-stream"
 
 
 def test_download_file_not_found(storage):
@@ -128,3 +130,34 @@ def test_download_file_with_nested_directories(storage):
 
     assert response.status_code == 200
     assert response.content == b"nested content"
+
+
+def test_download_file_headers_encode_quotes_and_non_ascii(storage):
+    path = '/docs/résumé "final".pdf'
+    content = b"original bytes"
+    storage.upload(path, content)
+
+    response = get_file(path)
+
+    assert response.status_code == 200
+    assert response.content == content
+    assert response.headers["Content-Type"] == "application/octet-stream"
+    assert response.headers["Content-Disposition"] == (
+        'attachment; filename="r_sum_ _final_.pdf";'
+        "filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22.pdf"
+    )
+
+def test_download_file_headers_encode_space(storage):
+    path = "/docs/final report.pdf"
+    content = b"original bytes"
+    storage.upload(path, content)
+
+    response = get_file(path)
+
+    assert response.status_code == 200
+    assert response.content == content
+    assert response.headers["Content-Type"] == "application/octet-stream"
+    assert response.headers["Content-Disposition"] == (
+        'attachment; filename="final report.pdf";'
+        "filename*=UTF-8''final%20report.pdf"
+    )

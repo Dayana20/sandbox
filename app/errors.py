@@ -1,5 +1,8 @@
 class StorageError(Exception):
     """Base exception for document storage errors."""
+    #
+class StorageNotConfiguredError(StorageError):
+    pass
 
 
 class InvalidRequestError(StorageError):
