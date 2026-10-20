@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+import app
 from app.api.router import api_router
 from app.core.config import settings
 from app.errors import (
@@ -10,6 +11,7 @@ from app.errors import (
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
+    StorageNotConfiguredError
 )
 
 
@@ -115,6 +117,21 @@ def create_app() -> FastAPI:
                 }
             },
         )
+
+    @app.exception_handler(StorageNotConfiguredError)
+    async def handle_storage_configured_error(
+        request: Request,
+        exc: StorageNotConfiguredError,
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "provider_not_configured",
+                    "message": str(exc),
+                }
+            },
+        )  
 
     return app
 
