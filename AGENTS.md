@@ -16,7 +16,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
+- `app/cache/` - `CachedDocumentStorage`, a Redis metadata cache that wraps any `DocumentStorage`, and the Redis client factory
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` (wrapped in `CachedDocumentStorage` when `REDIS_URL` is set) to the routes
 - `app/validation.py` - `validate_path()`, the path check every route uses
 - `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
