@@ -122,3 +122,54 @@ def test_upload_storage_errors(error, status, code):
 
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
+
+# Set file.size above a monkeypatched small MAX_UPLOAD_BYTES; assert the route raises InvalidRequestError and file.file.read was never called.
+def test_upload_file_size_exceeds_max(monkeypatch):
+    class FakeFile:
+        def __init__(self):
+            self.size = 11
+            self.read_called = False
+
+        def read(self, n):
+            # simulates returning n bytes; it doesn’t read a real file
+            self.read_called = True
+            return b"x" * n
+
+    class FakeUploadFile:
+        def __init__(self):
+            self.file = FakeFile()
+            self.size = 11
+
+    monkeypatch.setattr(upload, "MAX_UPLOAD_BYTES", 10)
+    fake_file = FakeUploadFile()
+
+    with pytest.raises(upload.InvalidRequestError) as exc_info:
+        upload.upload_file(file=fake_file, path="/report.pdf", storage=FakeDocumentStorage())
+
+    assert str(exc_info.value) == "File is larger than 150 MB"
+    assert not fake_file.file.read_called
+
+
+def test_upload_file_size_unknown_exceeds_max(monkeypatch):
+    class FakeFile:
+        def __init__(self):
+            self.size = None
+            self.read_called_with = None
+
+        def read(self, n):
+            self.read_called_with = n
+            return b"x" * (n + 1)  # return one more byte than requested
+
+    class FakeUploadFile:
+        def __init__(self):
+            self.file = FakeFile()
+            self.size = None
+
+    monkeypatch.setattr(upload, "MAX_UPLOAD_BYTES", 10)
+    fake_file = FakeUploadFile()
+
+    with pytest.raises(upload.InvalidRequestError) as exc_info:
+        upload.upload_file(file=fake_file, path="/report.pdf", storage=FakeDocumentStorage())
+
+    assert str(exc_info.value) == "File is larger than 150 MB"
+    assert fake_file.file.read_called_with == 11  # MAX_UPLOAD_BYTES + 1
