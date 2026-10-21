@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -13,6 +15,8 @@ from app.errors import (
     ProviderError,
     StorageNotConfiguredError
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -168,6 +172,32 @@ def create_app() -> FastAPI:
                 }
             },
         )  
+
+    # Anything not handled above is a bug. Return a fixed message so the
+    # caller never sees the exception text, and keep the detail in the log.
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(
+        request: Request,
+        exc: Exception,
+    ):
+        # Method, path and exception type only. No query string, headers,
+        # body or exception message, which may hold paths or secrets.
+        logger.error(
+            "internal_error method=%s path=%s status=500 error=%s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": "Internal server error",
+                }
+            },
+        )
 
     return app
 
