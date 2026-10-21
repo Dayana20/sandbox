@@ -18,6 +18,14 @@ Laya built two shared pieces in PR #9: `validate_path()`, the one path check eve
 
 **Tests that show it:** `test_validation.py` already ran every entry in `BAD_PATHS` both directly and through every route (`test_every_route_rejects_bad_path_before_storage`, with a storage that fails the test if it's ever called). Adding 4 bad paths therefore added 28 test cases: 4 direct plus 4 x 6 route inputs. Each one proves a path with a newline, null byte, tab or DEL gets `400` and never reaches Dropbox.
 
+Against the running service, a path with a newline (`%0A`) is refused with `400` before Dropbox is called:
+
+![A newline in the path returns 400](images/ext-control-char-400.png)
+
+And the control-character cases in the route test, all 28 passing:
+
+![Control-character route tests pass](images/ext-validation-tests.png)
+
 ## Extension 2: stop logging file paths
 
 **What changed and why:** Turki also pointed out that the Dropbox error log printed the full file path, and file names can contain private information. The `dropbox_error` log line now keeps the operation, error type, Dropbox error and Dropbox request id, but not the path.
@@ -36,6 +44,8 @@ Laya built two shared pieces in PR #9: `validate_path()`, the one path check eve
 **What didn't need to change:** `app/providers/dropbox/storage.py`. All five `DropboxStorage` methods are wrapped by `@logs_dropbox_errors`, so changing the decorator changed the logging for every operation without editing any of them.
 
 **Tests that show it:** `test_lookup_failure_is_logged_with_dropbox_detail` and `test_move_failure_is_logged_without_paths` assert that the file name is not in the log line, while the operation, error type and request id still are.
+
+![Logging tests pass](images/ext-logging-tests.png)
 
 ## What this shows
 
