@@ -28,10 +28,14 @@ class Settings:
         "DROPBOX_APP_SECRET"
     )
 
-    # Upload idempotency needs Redis. Without REDIS_URL, uploads that send an
-    # Idempotency-Key are refused (503). Uploads without a key never use Redis.
+    # One Redis for both features. Metadata caching is on only when this is
+    # set. Uploads that send an Idempotency-Key are refused (503) without it.
     redis_url: str | None = os.getenv(
         "REDIS_URL"
+    )
+
+    metadata_cache_ttl_seconds: int = int(
+        os.getenv("METADATA_CACHE_TTL_SECONDS", "60")
     )
 
     # How long an Idempotency-Key is remembered. Must be a positive number.

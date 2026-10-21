@@ -16,8 +16,9 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
+- `app/cache/` - `CachedDocumentStorage`, a Redis metadata cache that wraps any `DocumentStorage`, and the Redis client factory
 - `app/idempotency/` - upload `Idempotency-Key` support, independent of the provider: `IdempotencyService` (state machine), `RedisIdempotencyStore`, and the Redis client factory
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes, and `get_idempotency_service()`. The Dropbox client is created once and shared (`get_dropbox_client()`)
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` (wrapped in `CachedDocumentStorage` when `REDIS_URL` is set) to the routes, and `get_idempotency_service()`. The Dropbox client is created once and shared (`get_dropbox_client()`)
 - `app/validation.py` - `validate_path()`, the path check every route uses
 - `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`) and the `Idempotency*` errors for upload keys, which are not storage errors and have their own handler in `app/main.py`
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
@@ -61,6 +62,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 5. Document the endpoint in README.md.
 
 ## Contributing
+
+The full workflow (review, merge, releases) is in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
 - Branch off `milestone-3`, open a PR into `milestone-3`. Don't push to it directly. Don't merge anything into `main`, `yashwanth` or the `milestone-*-base` branches; they hold the submitted milestones.
 - A teammate reviews and someone other than the author merges.
