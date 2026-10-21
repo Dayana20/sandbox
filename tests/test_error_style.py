@@ -80,6 +80,18 @@ def test_every_error_has_the_same_shape(case):
     assert_error(send(), status, code)
 
 
+def test_unexpected_bug_has_the_same_shape():
+    class BrokenStorage(FakeDocumentStorage):
+        def get_metadata(self, path):
+            raise RuntimeError("a bug in our code")
+
+    app.dependency_overrides[get_document_storage] = BrokenStorage
+    # By default TestClient re-raises server errors; a real caller gets the 500 response
+    response = TestClient(app, raise_server_exceptions=False).get("/files/metadata", params={"path": "/a.txt"})
+
+    assert_error(response, 500, "internal_error")
+
+
 def test_upload_conflict_has_the_same_shape(storage):
     storage.upload("/a.txt", b"old")
 
