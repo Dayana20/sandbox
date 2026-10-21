@@ -8,7 +8,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 ## Code map
 
-- `app/main.py` - creates the FastAPI app and turns our errors into JSON responses
+- `app/main.py` - creates the FastAPI app, maps our errors to JSON responses (`ERRORS`), adds `X-Request-ID` and logs every failed request
 - `app/api/router.py` - includes every route module
 - `app/api/routes/` - one file per feature: `upload.py`, `read.py`, `update.py`, `delete.py`, `health.py`
 - `app/providers/base.py` - `DocumentStorage`, the interface routes depend on
@@ -16,9 +16,11 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token
   - `storage.py` has `DropboxStorage`, one method per operation
   - `error_mapping.py` turns Dropbox errors into our errors and logs the original Dropbox error (`@logs_dropbox_errors`)
-- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes
+- `app/cache/` - `CachedDocumentStorage`, a Redis metadata cache that wraps any `DocumentStorage`, and the Redis client factory
+- `app/idempotency/` - upload `Idempotency-Key` support, independent of the provider: `IdempotencyService` (state machine), `RedisIdempotencyStore`, and the Redis client factory
+- `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` (wrapped in `CachedDocumentStorage` when `REDIS_URL` is set) to the routes, and `get_idempotency_service()`. The Dropbox client is created once and shared (`get_dropbox_client()`)
 - `app/validation.py` - `validate_path()`, the path check every route uses
-- `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
+- `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`) and the `Idempotency*` errors for upload keys, which are not storage errors and have their own handler in `app/main.py`
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
 - `tests/fakes.py` - `FakeDocumentStorage`, an in-memory stand-in for Dropbox
 - `tests/integration/` - tests that call real Dropbox
@@ -30,7 +32,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - Routes get storage with `Depends(get_document_storage)`. Don't create a Dropbox client inside a route.
 - Only code in `app/providers/dropbox/` calls the Dropbox SDK.
 - Dropbox errors must be turned into `app/errors.py` errors before they leave `DropboxStorage`, raised `from` the Dropbox exception. Put `@logs_dropbox_errors` on every `DropboxStorage` method.
-- Never log tokens, file contents or Dropbox's free-text messages.
+- Idempotency lives in `app/idempotency/`, never in `DropboxStorage` or the `DocumentStorage` interface. It fails closed: with an `Idempotency-Key` and no usable Redis, the upload must not run.
+- Never log file paths, tokens, file contents, Dropbox's free-text messages or raw idempotency keys.
 - File endpoints return `FileResource`, never raw Dropbox objects.
 - Don't overwrite or auto-rename files. Uploads and moves onto an existing path return `409`.
 - Never commit `.env`, tokens or keys.
@@ -54,13 +57,15 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 1. Add the method to `DocumentStorage` in `app/providers/base.py` if it is new.
 2. Implement it in `DropboxStorage` and `FakeDocumentStorage`.
-3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`.
+3. Add a route file in `app/api/routes/` and include it in `app/api/router.py`. List the errors it can return with `responses=error_responses(...)` from `app/api/responses.py`, so `/docs` matches the README.
 4. Add route tests, a mocked Dropbox test and an integration test.
 5. Document the endpoint in README.md.
 
 ## Contributing
 
-- Branch off `yashwanth`, open a PR into `yashwanth`. Don't push to it directly.
+The full workflow (review, merge, releases) is in [docs/WORKFLOW.md](docs/WORKFLOW.md).
+
+- Branch off `milestone-3`, open a PR into `milestone-3`. Don't push to it directly. Don't merge anything into `main`, `yashwanth` or the `milestone-*-base` branches; they hold the submitted milestones.
 - A teammate reviews and someone other than the author merges.
 - Keep each PR to one feature. Don't mix in unrelated changes.
 - `pytest`, `ruff check .` and `mypy app` must pass before merging. CI runs all three.

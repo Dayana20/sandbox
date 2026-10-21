@@ -38,9 +38,10 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         errors raised `from` a Dropbox exception are logged. Checks we make
         ourselves, like refusing a folder, are not Dropbox failures.
 
-        Logs one line per failure with the operation, the path, our error
-        type, the Dropbox error and Dropbox's request id. It never logs the
-        token, file contents, or Dropbox's free-text messages.
+        Logs one line per failure with the operation, our error type, the
+        Dropbox error and Dropbox's request id. It never logs file paths
+        (file names can be private), the token, file contents, or Dropbox's
+        free-text messages.
     """
 
     @functools.wraps(method)
@@ -50,9 +51,7 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
         except StorageError as exc:
             cause = exc.__cause__
             if isinstance(cause, DropboxException):
-                # args[0] is the DropboxStorage instance, args[1] the path
-                path = args[1] if len(args) > 1 else kwargs.get("path")
-                _log_dropbox_error(method.__name__, path, exc, cause)
+                _log_dropbox_error(method.__name__, exc, cause)
             raise
 
     return wrapper
@@ -60,7 +59,6 @@ def logs_dropbox_errors(method: Callable[P, R]) -> Callable[P, R]:
 
 def _log_dropbox_error(
     operation: str,
-    path: object,
     error: StorageError,
     cause: DropboxException,
 ) -> None:
@@ -79,9 +77,8 @@ def _log_dropbox_error(
 
     logger.log(
         level,
-        "dropbox_error operation=%s path=%s error=%s dropbox_error=%s request_id=%s",
+        "dropbox_error operation=%s error=%s dropbox_error=%s request_id=%s",
         operation,
-        path,
         type(error).__name__,
         dropbox_error,
         cause.request_id,
@@ -135,6 +132,11 @@ def translate_lookup_error(
     if error.is_restricted_content():
         return PermissionDeniedError(
             f"Access denied: {path}"
+        )
+
+    if error.is_not_file():
+        return InvalidRequestError(
+            f"Path is not a file: {path}"
         )
 
     return ProviderError(

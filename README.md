@@ -2,6 +2,10 @@
 
 FastAPI service for storing and retrieving documents. Dropbox is the first provider.
 
+**Team 1:** Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni
+
+**Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
+
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
 ## Base
@@ -20,25 +24,59 @@ Paths are absolute inside the Dropbox app folder, e.g. `/docs/report.pdf`.
 
 `FileResource` (`app/models/file.py`) has `id`, `name`, `path`, `size`, and optional `modified_at`.
 
-Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundError` from there. `app/main.py` returns:
+## Errors
+
+Every failed request returns the same JSON shape, whichever endpoint it came from:
 
 ```json
-{ "error": { "code": "not_found", "message": "..." } }
+{ "error": { "code": "not_found", "message": "File not found: /docs/report.pdf" } }
 ```
 
-| Exception | Status | Code |
-| --- | --- | --- |
-| `InvalidRequestError` | 400 | `invalid_request` |
-| `PermissionDeniedError` | 403 | `permission_denied` |
-| `FileNotFoundError` | 404 | `not_found` |
-| `FileConflictError` | 409 | `conflict` |
-| `ProviderError` | 502 | `provider_error` |
+`code` is the stable part of the contract; callers should branch on it. `message` is a short human-readable explanation and may change. Every response, success or failure, has an `X-Request-ID` header that matches the server's failure log.
+
+| Status | Code | Raised as | When it happens | Retry? |
+| --- | --- | --- | --- | --- |
+| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (e.g. `path` without a leading `/`), the path is a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
+| 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
+| 404 | `not_found` | `FileNotFoundError` | Nothing exists at `path`, including a repeated delete or move | No |
+| 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
+| 409 | `idempotency_conflict` | `IdempotencyConflictError` | An upload's `Idempotency-Key` was already used for a different request (different `path` or bytes) | No. Use a new key for a different upload |
+| 409 | `idempotency_in_progress` | `IdempotencyInProgressError` | The same request with this key is still running, or was cut off. It was not repeated | Yes, later, with the same key |
+| 409 | `idempotency_outcome_unknown` | `IdempotencyOutcomeUnknownError` | The first request with this key may have uploaded the file, so it is not repeated | No. Check whether the file exists, then use a new key |
+| 502 | `provider_error` | `ProviderError` | Dropbox failed, timed out, was unreachable, or rate limited us | Yes, after a short wait. For upload, move and delete, first check whether the change already happened |
+| 503 | `provider_not_configured` | `StorageNotConfiguredError` | The server has no Dropbox credentials set | Not until the server is configured |
+| 503 | `idempotency_unavailable` | `IdempotencyUnavailableError` | An upload sent an `Idempotency-Key` but Redis can't be used (not configured, down, or unreadable record). Dropbox was not called | Yes, after a short wait, with the same key |
+| 500 | `internal_error` | any other exception | A bug in the service. The message is always `Internal server error`; details stay in the server log | Maybe later; report it with the request id |
+
+The storage errors are mapped in one place, `ERRORS` in `app/main.py`. The four `idempotency_*` errors are not storage errors (the provider was not asked, or not asked again), so they have their own handler in `app/main.py`. It returns the same JSON shape and writes the same `request_failed` log line with `provider=no`, and they are never turned into `internal_error`. Dropbox errors are turned into these exceptions inside `app/providers/dropbox/error_mapping.py`, so callers never see Dropbox exceptions or Dropbox error text.
+
+**Public:** the status code, the `code`, our short `message`, and the request id.
+
+**Internal (server logs only):** the original Dropbox exception and error union, Dropbox's request id, and the operation that failed. Tokens, file contents and Dropbox's free-text messages are never logged or returned.
+
+### Failure logs
+
+`app/main.py` writes one log line for every failed request (logger `app.requests`):
+
+```
+request_failed operation=read_metadata error=not_found status=404 provider=no request_id=3f9c...
+```
+
+| Field | Meaning |
+| --- | --- |
+| `operation` | The route that handled the request (`upload_file`, `read_metadata`, `download_file`, `move_file`, `delete_file`) |
+| `error` | The error `code` returned to the caller |
+| `status` | The HTTP status returned |
+| `provider` | `yes` if Dropbox was called and failed, `no` if our own checks rejected the request |
+| `request_id` | Same value as the `X-Request-ID` response header. A caller can send its own |
+
+4xx failures are logged at `WARNING`, 5xx at `ERROR`. Unexpected bugs (500) are logged separately as `internal_error method=... path=... status=500 error=<exception type> request_id=...`, without the exception message. The line has no error message, query values, request body or credentials, and no stack trace. When Dropbox was involved, the Dropbox-level detail is in the separate `dropbox_error` line below.
 
 ## Storage
 
-- `get_document_storage()` creates a Dropbox client from the credentials in `.env` and returns `DropboxStorage`.
+- `get_document_storage()` creates a Dropbox client from the credentials in `.env` and returns `DropboxStorage`. When `REDIS_URL` is set it wraps that in `CachedDocumentStorage` (see Metadata caching).
 - `to_file_resource()` maps Dropbox file metadata onto `FileResource`.
-- `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the shared exceptions above.
+- `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the errors listed in [Errors](#errors).
 - `FakeDocumentStorage` (`tests/fakes.py`) keeps files in memory and raises `FileNotFoundError` for a missing path.
 
 ## Provider boundary
@@ -47,7 +85,7 @@ Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundErro
 | --- | --- |
 | Which code knows about Dropbox? | Only `app/providers/dropbox/` (`client.py`, `storage.py`, `error_mapping.py`) and the one place that picks the provider, `app/dependencies.py` |
 | Which code only uses our own types? | Routes in `app/api/routes/`, `app/models/file.py`, `app/errors.py`, `app/validation.py` |
-| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` builds the Dropbox client and returns a `DropboxStorage` |
+| Where is the real provider created? | `get_document_storage()` in `app/dependencies.py` returns a `DropboxStorage` around one Dropbox client that is created on first use and shared by every request |
 | How does it reach the routes? | Each route asks for `storage: DocumentStorage = Depends(get_document_storage)`. Routes never create it themselves |
 | How do tests swap it? | `app.dependency_overrides[get_document_storage] = lambda: FakeDocumentStorage()`. No network or credentials needed |
 | Where are Dropbox objects translated? | `DropboxStorage.to_file_resource()` turns Dropbox `FileMetadata` into our `FileResource`; `error_mapping.py` turns Dropbox errors into ours |
@@ -116,6 +154,7 @@ Every route that takes a file path checks it with `validate_path` from `app/vali
 | Rule | Rejected example |
 | --- | --- |
 | Required | missing or empty |
+| No control characters (newline, tab, null byte, ...) | `/docs/a\n.pdf` |
 | Starts with `/` | `docs/report.pdf` |
 | Ends with a file name, not `/` | `/docs/`, `/` |
 | No empty, `.` or `..` segments | `/docs//a.pdf`, `/docs/./a.pdf`, `/docs/../a.pdf` |
@@ -127,18 +166,17 @@ Paths are not normalized or lower-cased; the service passes them to Dropbox exac
 When Dropbox fails, the caller gets a short error like `File not found: /docs/a.pdf`. The original Dropbox error is written to the server log instead, one line per failure, by the `logs_dropbox_errors` decorator in `app/providers/dropbox/error_mapping.py`:
 
 ```
-dropbox_error operation=get_metadata path=/docs/a.pdf error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
+dropbox_error operation=get_metadata error=FileNotFoundError dropbox_error=ApiError: GetMetadataError('path', LookupError('not_found', None)) request_id=4b3f...
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `operation` | The `DropboxStorage` method that failed |
-| `path` | The path it was called with (the source path for a move) |
 | `error` | The error we returned to the caller |
 | `dropbox_error` | The Dropbox exception class, plus the typed Dropbox error for API and auth errors |
 | `request_id` | Dropbox's id for the request, useful when asking Dropbox support |
 
-`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. The token, file contents and Dropbox's free-text messages are never logged. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
+`provider_error` failures are logged at `ERROR`; the rest (not found, conflict, bad path, permission) at `WARNING`. No stack traces are printed. File paths are not logged, because file names can contain private information. The token, file contents and Dropbox's free-text messages are never logged either. Checks the service makes itself, such as refusing a folder or a bad path, are not Dropbox failures and are not logged here.
 
 ## Upload a file
 
@@ -150,6 +188,7 @@ Saves a new file to the Dropbox app folder and returns its metadata. If a file a
 | --- | --- | --- |
 | `file` | yes | The file to upload |
 | `path` | yes | Where to save it, e.g. `/docs/report.pdf` |
+| `Idempotency-Key` (header) | no | Makes a retry safe. See [Upload idempotency](#upload-idempotency). Leave it out and nothing changes. |
 
 Example response:
 
@@ -167,10 +206,12 @@ Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, file over 150 MB, or an empty or over-long `Idempotency-Key` |
 | 403 | `permission_denied` | Token can't write to Dropbox |
 | 409 | `conflict` | A file already exists at `path` |
+| 409 | `idempotency_conflict`, `idempotency_in_progress`, `idempotency_outcome_unknown` | Only with an `Idempotency-Key`. See [Upload idempotency](#upload-idempotency) |
 | 502 | `provider_error` | Dropbox failed |
+| 503 | `idempotency_unavailable` | Only with an `Idempotency-Key`: Redis can't be used, so nothing was uploaded |
 
 Try it:
 
@@ -179,6 +220,128 @@ curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs
 ```
 
 How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
+
+## Upload idempotency
+
+`POST /files` can take an optional `Idempotency-Key` header so a client can retry an upload without risking a second upload.
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/files \
+  -H "Idempotency-Key: 7d9f1c2e-upload-report" \
+  -F "file=@report.pdf" -F "path=/docs/report.pdf"
+```
+
+```text
+FastAPI upload route
+      |
+      +--> IdempotencyService --> Redis
+      |
+      +--> DocumentStorage --> DropboxStorage --> Dropbox
+```
+
+Only upload has this. Metadata reads, downloads, moves and deletes do not. `DocumentStorage` and `DropboxStorage` know nothing about idempotency keys: the code is in `app/idempotency/` and is called from the upload route.
+
+### The contract
+
+| | |
+| --- | --- |
+| Header | `Idempotency-Key: <value>`, optional. With no header the upload behaves exactly as before and never touches Redis |
+| Key rules | 1 to 255 characters. An empty or longer key is `400 invalid_request` |
+| Scope | The whole service, for the upload operation. One key identifies one logical upload, whoever sends it |
+| Redis key | `document-storage:idempotency:upload:<SHA-256 of the key>`. The caller's key is never stored in Redis or logged. Logs show the first 12 characters of the hash as `key_id` |
+| Fingerprint | SHA-256 of canonical JSON `{"content_sha256": ..., "operation": "upload", "path": ..., "version": 1}`. So it covers the destination `path` and the file bytes. The file name and content type the client sends are not part of it, because the upload ignores them. The file itself is never stored |
+| Record | JSON with `state`, `fingerprint`, an internal `owner` token (see [Reservation ownership](#reservation-ownership)) and, once it has succeeded, the `FileResource` that was returned |
+| Retention | `IDEMPOTENCY_TTL_SECONDS`, default `86400` (24 hours). Redis expires the record. The timer starts when the key is reserved (`in_progress`) and restarts each time the state changes. It is not renewed while an upload runs, so it must be longer than the longest upload |
+
+States: `in_progress` (claimed, Dropbox being called), `succeeded` (Dropbox confirmed, result stored) and `uncertain` (Dropbox may have created the file, outcome unknown).
+
+### What each request gets
+
+| Request | State found | Result | Dropbox called? |
+| --- | --- | --- | --- |
+| New key | none | The upload runs. `201` | Yes, once |
+| Same key, same request | `succeeded` | The stored result, `201` | No |
+| Same key, different request | any | `409 idempotency_conflict` | No |
+| Same key, same request | `in_progress` | `409 idempotency_in_progress`. It does not wait | No |
+| Same key, same request | `uncertain` | `409 idempotency_outcome_unknown`: the original may have completed, so it is not repeated | No |
+| Any key | Redis can't be used | `503 idempotency_unavailable` | No |
+
+A different request means a different `path` or different bytes. A repeated key is checked against the fingerprint first, so a changed payload is always a conflict, whatever the state. The error messages are fixed. They never contain the key, a fingerprint, a file hash or a Redis message.
+
+### How an upload runs
+
+1. The route checks the file, the `path`, the key and the size, exactly as without a key. A request that fails here is refused before Redis or Dropbox are involved. It claims nothing, so it leaves no record. The caller can fix the input and use the same key.
+2. The route reads the file, computes the fingerprint and asks Redis to claim the key. The claim is one `SET ... NX EX`, and it stores a fresh random owner token in the record. Two overlapping requests cannot both claim it, so only one of them can reach Dropbox. A request that finds the key already taken gets no ownership.
+3. Only the request that claimed the key calls `storage.upload()`. Then, using its owner token for every change to the record:
+   - **Success:** the `FileResource` is stored and the key becomes `succeeded`.
+   - **Dropbox proves nothing was uploaded:** the record is deleted and the original error is returned. The same key can be used again. These are the only errors treated this way, because each is an answer Dropbox gave to this request: `invalid_request` (bad path or name), `permission_denied` and `conflict` (a file is already at the path).
+   - **Anything else** (`provider_error`, a network failure, an unexpected exception): Dropbox may have received and applied the upload. The key becomes `uncertain`, and the first caller still gets the original error. Retries get `idempotency_outcome_unknown` until the record expires. Nothing is retried automatically.
+
+### Reservation ownership
+
+Each successful claim stores an opaque, random owner token (`uuid4().hex`) in its record. The token identifies that one reservation, not the caller. It stays inside the service: it is never returned to a client and never logged. The only way another request could see it is by reading Redis directly.
+
+Saving `succeeded`, marking `uncertain` and releasing the record are applied only if the record in Redis still carries that request's token. The check and the change are one Redis Lua script, so nothing can change the record between them (there is no Python `GET` followed by `SET` or `DEL`). Without that, this could happen:
+
+```text
+A claims key K, then runs longer than the TTL, so A's record expires
+B claims K and creates a new in_progress record
+A finally finishes. Without ownership, A would overwrite or delete B's record.
+```
+
+With ownership, A's late change is skipped in every case:
+
+- **A succeeds late:** A still returns `201`. B's record is left as it is.
+- **A fails late** with an uncertain error: A still returns the provider error. It does not mark B's record `uncertain`.
+- **A fails late** with a definitive error (conflict, permission, bad request): A still returns that error. It does not delete B's record.
+- **No newer record exists** (A's record simply expired): nothing is recreated.
+
+Each skipped change is logged as `idempotency_state_update_skipped` with the operation, the transition that was attempted, the reason (`record_missing` or `owner_changed`) and the short `key_id`. The owner token, fingerprint, response and raw key are not logged.
+
+Ownership only stops an older request from corrupting a newer reservation. It does not stop the second upload itself: once A's record has expired, B is a new request and may upload (see the long-running upload limit below).
+
+### Redis unavailable (fails closed)
+
+When a key is supplied and Redis can't be used, the upload is refused with `503 idempotency_unavailable` and Dropbox is not called. Uploading anyway could create a duplicate while claiming it could not. "Can't be used" covers: `REDIS_URL` not set, Redis down or timing out, and a record we can't read. Redis messages are logged by exception type only and are never returned.
+
+This is the opposite of a cache, where a Redis failure is ignored. Here Redis is part of the correctness of the request.
+
+### Restarts and crashes
+
+Records live in Redis, not in the app, so an app restart forgets nothing: a new process sees the same `succeeded`, `uncertain` and `in_progress` records. If the process dies after the claim, the record stays `in_progress`. Dropbox may or may not have the file, so the upload is not run again. That key stays blocked until the record expires. We chose to risk blocking a retry instead of risking a second upload. There is no background cleanup.
+
+### Guarantees and limits
+
+What this application guarantees (the code in `app/idempotency/`, with tests):
+
+- While the Redis idempotency record is present and unexpired, one key never leads to a second Dropbox upload from this service: not for a repeat, an overlapping request, a restart, or an uncertain outcome. Once the record expires, reuse of the key is treated as a new request.
+- A repeat with the same request returns the first result. Reusing a key for a different request is refused.
+- A request can only change or delete the record it claimed. If its record expired and another request claimed the key, the older request cannot overwrite, mark `uncertain`, or delete the newer reservation.
+- Nothing is uploaded under a key when Redis can't enforce it.
+- Raw keys, file contents and file paths are never logged.
+
+What Redis provides: atomic `SET NX`, Lua scripts that run as one atomic step (our owner check plus change), and removing a record when its TTL runs out. Redis knows nothing about uploads. Dropbox provides `WriteMode.add` with `strict_conflict`, which refuses to overwrite a file at the same path. It has no idea about our keys. The idempotency guarantee comes from our integration, not from either of them.
+
+What it does not guarantee:
+
+- **After the TTL:** the record is gone, and the same key is a new request. The guarantee ends with the retention period, and it is not permanent.
+- **If Redis loses data** (restart without persistence, eviction, a flush): the records are gone and a retried key uploads again. This code does not configure Redis persistence. Use persistence and a no-eviction policy if you need the guarantee to survive that.
+- **Uncertain uploads:** they stay blocked, not resolved. We don't check whether the file exists.
+- **If Redis is slow when claiming:** a claim that Redis applied but whose answer timed out is reported as `503`. The key then stays `in_progress` until it expires, although nothing was uploaded. This errs on the side of no duplicates.
+- **If the result can't be saved** after a good upload: if Dropbox succeeds but the service cannot write the `succeeded` state to Redis, the original caller still receives `201`, because the upload really happened and reporting a failure would only invite a retry. The record is never falsely marked `succeeded`. It stays `in_progress` (with no stored response and no new TTL) until it expires, and the problem is logged as `idempotency_error operation=save_succeeded`. A later retry with the same key and request gets `409 idempotency_in_progress` and does not call Dropbox again, because the service cannot prove to that caller that the first upload was recorded. The cost is that the retry cannot get the stored result until the key expires.
+- **Long-running uploads:** the service does not renew an in-progress reservation while an upload is running. If an upload lasts longer than the configured TTL, the reservation may expire before the upload completes. A request with the same key that arrives after that finds no record, claims the key, and can start a second upload. There is no heartbeat, lease renewal or distributed lock. Set `IDEMPOTENCY_TTL_SECONDS` well above the longest upload. Ownership does not remove this limit (see Reservation ownership).
+- **Uploads with no key** are not protected at all.
+
+### Try it
+
+Fast tests use `fakeredis` (with `lupa`, which lets it run the Lua scripts) and need no Redis server (see Tests). To see it against a real Redis and Dropbox:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+python -m scripts.demo_idempotency      # uses REDIS_URL, default redis://localhost:6379/0
+```
+
+It uploads once, replays, sends a changed payload, simulates a restart and an unreachable Redis, and prints how many times Dropbox was asked to upload at each step. It deletes the Dropbox file and the Redis record afterwards.
 
 ## Get file metadata
 
@@ -226,7 +389,7 @@ How it works: the route in `app/api/routes/read.py` checks `path` with `validate
 | --- | --- | --- |
 | `path` | yes | The file to download, e.g. `/docs/report.pdf` |
 
-The route returns the bytes without setting a file-specific MIME type or `Content-Disposition` filename. Clients should choose the local filename when saving the response.
+The response returns the original file bytes with `Content-Type: application/octet-stream` and `Content-Disposition: attachment`. The filename is taken from the final segment of the requested path. `Content-Disposition` includes an ASCII `filename` fallback (unsafe or non-ASCII characters are replaced with `_`) and a UTF-8, percent-encoded `filename*` value so clients that support it can use the original filename.
 
 Errors:
 
@@ -314,7 +477,71 @@ curl -i -X DELETE "http://127.0.0.1:8000/files?path=/docs/report.pdf"
 
 How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
 
+## Metadata caching
+
+`GET /files/metadata` can be served from Redis, so repeated reads of the same path do not call Dropbox each time. The API does not change. Caching is off unless `REDIS_URL` is set.
+
+```text
+FastAPI route -> DocumentStorage -> CachedDocumentStorage -+-> Redis
+                                                           +-> DropboxStorage -> Dropbox
+```
+
+`CachedDocumentStorage` (`app/cache/cached_storage.py`) wraps any `DocumentStorage`. It knows nothing about Dropbox, and `DropboxStorage` knows nothing about Redis. Only `get_document_storage()` decides to wrap.
+
+| | |
+| --- | --- |
+| Key | `document-storage:metadata:<path>`, with the path lower-cased (see "Path casing" below) |
+| Value | The `FileResource` as JSON |
+| TTL | `METADATA_CACHE_TTL_SECONDS`, default 60. Set it to 0 to turn the cache off |
+| Cached | Successful `get_metadata` results only |
+| Not cached | File contents (`download` always goes to Dropbox), and every error (not found, permission, provider) |
+
+How it behaves:
+
+- **Read:** Redis first. On a hit the cached `FileResource` is returned and Dropbox is not called. On a miss Dropbox is called and the result is stored with the TTL.
+- **Upload, move, delete:** the call goes to Dropbox first. Afterwards the entries for the paths it touched are deleted: the path for upload and delete, both old and new path for move.
+- **When a change fails:** it depends on whether we know Dropbox left the file alone.
+  - A request refused before it reaches Dropbox (bad path, rejected by the route) never touches the cache.
+  - Dropbox cleanly refusing (`invalid_request`, `conflict`, `permission_denied`) means nothing changed, so the cache stays.
+  - If a delete or move reaches Dropbox and Dropbox confirms that the source does not exist (`not_found`), the cached metadata for that source path is invalidated before the `not_found` error is returned. The cached entry was stale. For a move only the source path is dropped, because a missing destination is reported as a conflict or `provider_error`, never as `not_found`. An upload that gets `not_found` leaves the cache alone, because that says nothing about the cached file.
+  - A `provider_error` or any unexpected exception means Dropbox may have applied the change before the failure reached us. The entries are deleted anyway and the original error is re-raised unchanged.
+  - If Redis is down during that delete, the Dropbox error still wins and `cache_error` is logged.
+- **Bad cache data:** a value in Redis that is not valid JSON, does not fit `FileResource`, or cannot be decoded is treated as a miss. `cache_error` is logged with the exception type only, never the stored contents. Dropbox is called, the fresh result is returned, and the bad value is overwritten with valid metadata. The request does not fail.
+- **Path casing:** Dropbox treats `/Docs/A.pdf` and `/docs/a.pdf` as one file, so the cache key uses the lower-cased path and both spellings share one entry (reads, and invalidation on upload, move and delete). Only the key is lower-cased. Dropbox still receives the path exactly as the caller sent it and the cached `FileResource` keeps Dropbox's `path_display`. This assumes the provider ignores case like Dropbox does. A case-sensitive provider would need a different key function (`metadata_key`).
+- **Redis down:** the failure is logged as `cache_error` (exception type only) and the call carries on with Dropbox. Callers never see a Redis error. A dead Redis adds up to about half a second per Redis call, because of the 0.5 second timeouts.
+- **Logs:** `cache_hit`, `cache_miss`, `cache_write`, `cache_invalidate` and `cache_error`. Like every other log line in this service, they never contain the file path: the hit, miss, write and invalidate lines show a short one-way `key` id instead (the first 12 hex characters of the SHA-256 of the lower-cased path), so one file always logs the same id whatever its letter case. File contents, tokens and the Redis URL are never logged.
+
+**What our application guarantees**
+
+- For changes made outside this service (the Dropbox website, another app), a metadata read is out of date by at most `METADATA_CACHE_TTL_SECONDS`, apart from the cases listed under permitted staleness.
+- After an upload, move or delete made through this service, the next read of those paths reaches Dropbox. This includes calls that fail with an uncertain outcome (`provider_error`) and a delete or move whose source Dropbox reports as `not_found`, but not calls Dropbox cleanly refuses for other reasons.
+- The same file read or changed with different letter case uses the same cache entry.
+- Redis problems never make a request fail or change its result.
+
+**What Redis itself provides**
+
+- Storing a key and value and removing the key when its TTL runs out. Redis knows nothing about files or Dropbox, and it does not know when a file changed.
+
+**Permitted staleness.** An entry can be out of date for up to the TTL when:
+
+- a file changes outside this service;
+- Redis is down when we try to invalidate, so the old entry survives until its TTL;
+- a read that started before a mutation finishes after the invalidation and writes the old value back.
+
+A delete or move that Dropbox answers with `not_found` is not on this list. If it reaches Dropbox and Dropbox confirms that the source resource does not exist, the cached source metadata is invalidated before the `not_found` error is returned.
+
+Run it against a real Redis. The demo uploads a small file under `/integration-tests/`, reads it, moves it and deletes it, and prints the cache state and how many times Dropbox was called at each step (it deletes everything afterwards):
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+python -m scripts.demo_metadata_cache      # uses REDIS_URL, default redis://localhost:6379/0
+```
+
+The fast tests use `fakeredis` and need no Redis server.
+
 ## Tests
+
+The testing strategy (what we test, why, and known gaps) is in [TESTING.md](TESTING.md).
 
 Fast tests use the in-memory fake and mocked Dropbox clients. They need no Dropbox token and no network:
 
@@ -333,8 +560,9 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | File | What it checks |
 | --- | --- |
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
-| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given. Dropbox is not called. |
+| `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given, creates the client only once, and retries if credentials were missing. Dropbox is not called. |
 | `test_dropbox_client.py` | `create_dropbox_client()` uses the refresh token when set, falls back to an access token, and errors clearly when credentials are missing |
+| `test_cached_storage.py` | `CachedDocumentStorage` with `fakeredis`: miss then hit with the provider called once, errors and downloads not cached, TTL, invalidation on upload, move and delete (including uncertain provider failures, invalidation of the stale source entry on `not_found`, and no invalidation on other clean refusals), bad cached values treated as a miss, letter-case-insensitive keys, Redis down still works, and the dependency wiring |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
 | `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
@@ -343,7 +571,9 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | `test_dropbox_error_logging.py` | Dropbox failures are logged once with operation, path, error, Dropbox error and request id. Outages log at `ERROR` without a stack trace or response body. The token is never logged. Our own refusals and successes are not logged. |
 | `test_download.py` | `GET /files/download` with fake storage: returned bytes, empty content, missing path/file, and storage errors |
 | `test_dropbox_download.py` | `DropboxStorage.download` with a mocked Dropbox client: returned bytes and Dropbox error mapping |
+| `test_failure_logging.py` | One failure log line per failed request with operation, code, status, provider and request id; nothing logged on success; no secrets or messages in the log; caller's `X-Request-ID` reused |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
+| `test_upload_idempotency.py` | Upload with `Idempotency-Key`, using `fakeredis` and a counting fake provider: first request, replay with the provider called once, conflicting payload or path, overlapping requests (a blocked upload, no sleeps), a new service over the same Redis (restart), uncertain outcomes never retried, reservation ownership (a stale request cannot overwrite, mark uncertain or delete a newer reservation, and the owner check runs inside Redis), local rejections leaving no record, Dropbox's definitive errors releasing the key, Redis down or unset failing closed, TTL, no-key uploads unchanged, logs without the raw key or the file path, and the four `idempotency_*` errors using the shared error shape, `X-Request-ID` and `request_failed` log (never a 500, and a Redis outage is not logged as a Dropbox failure) |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
 | `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
@@ -364,22 +594,24 @@ mypy app
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main` and `yashwanth`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, `yashwanth` and `milestone-3`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.10, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
 
 ## Layout
 
 ```
 app/
 ├── main.py                 # App and error handlers
-├── dependencies.py         # get_document_storage()
+├── dependencies.py         # get_document_storage(), get_idempotency_service()
 ├── errors.py
 ├── validation.py           # validate_path(), shared by every route
 ├── api/routes/            # health, upload, read, download, update, delete
+├── cache/                  # CachedDocumentStorage, Redis client
+├── idempotency/            # upload Idempotency-Key: service, redis_store, redis_client
 ├── models/file.py
 └── providers/
     ├── base.py             # DocumentStorage
     └── dropbox/            # client, storage, error_mapping
-scripts/                    # verify_dropbox, get_refresh_token
+scripts/                    # verify_dropbox, get_refresh_token, demo_metadata_cache, demo_idempotency
 tests/                      # fakes and the tests above
 .github/workflows/ci.yml    # pytest, ruff, mypy
 pyproject.toml              # pytest, ruff, mypy settings
@@ -391,12 +623,16 @@ requirements.txt
 
 Python 3.10 (pinned in `.python-version`; CI uses the same version). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
 
+Windows (PowerShell):
+
 ```powershell
 python -m venv doc
 .\doc\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
 ```
+
+macOS / Linux (bash or zsh):
 
 ```bash
 python -m venv doc
@@ -405,16 +641,50 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+If you also have Anaconda installed, its `pytest`, `ruff` or `mypy` can run instead of the ones in `doc`. Run `python -m pytest` (and `python -m ruff`, `python -m mypy`) after activating `doc` to be sure you use the venv's copies.
+
 | Variable | Purpose |
 | --- | --- |
 | `APP_NAME` | API title |
 | `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` | From the Settings tab of your app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) |
 | `DROPBOX_REFRESH_TOKEN` | Used with the app key and secret to log in. It does not expire, so the app keeps working. See below. |
 | `DROPBOX_ACCESS_TOKEN` | Optional fallback, used only when no refresh token is set. A token generated in the App Console expires after about 4 hours. |
+| `REDIS_URL` | Optional, e.g. `redis://localhost:6379/0`. One Redis serves both features. It turns on the metadata cache (see Metadata caching). Uploads that send an `Idempotency-Key` need it and get `503` without it (see Upload idempotency). Other requests work without Redis. |
+| `METADATA_CACHE_TTL_SECONDS` | How long cached metadata may be stale. Default 60. `0` turns the cache off. |
+| `IDEMPOTENCY_TTL_SECONDS` | How long an Idempotency-Key is remembered. Default `86400` (24 hours). Must be a positive number. |
+
+### Redis (optional)
+
+Redis is only needed for the two extensions: the metadata cache and upload idempotency. Without it every route still works, and only uploads that send an `Idempotency-Key` are refused with `503`.
+
+1. Start Redis. Either one works:
+
+   ```bash
+   brew install redis && brew services start redis      # macOS, runs in the background
+   docker run --rm -p 6379:6379 redis:7-alpine          # any OS with Docker, stops when you close it
+   ```
+
+2. Set it in `.env`:
+
+   ```bash
+   REDIS_URL=redis://localhost:6379/0
+   ```
+
+3. Check it's running: `redis-cli ping` prints `PONG` (with Docker, run `docker exec -it <container> redis-cli ping`).
+4. Restart `uvicorn` so it reads the new `.env`.
+
+To stop Redis: `brew services stop redis`, or `Ctrl+C` in the Docker terminal. Leave `REDIS_URL` empty to run without it.
 
 ### Dropbox credentials
 
-The app needs the `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write` permissions (Permissions tab in the App Console).
+Create a Dropbox app:
+
+1. Open the [Dropbox App Console](https://www.dropbox.com/developers/apps) and click **Create app**.
+2. Choose **Scoped access**, then **App folder** (the app can only see its own folder, `Apps/<app name>`), and give it any name.
+3. On the **Permissions** tab, tick `files.metadata.read`, `files.metadata.write`, `files.content.read` and `files.content.write`, then click **Submit**.
+4. The **Settings** tab shows the **App key** and **App secret**.
+
+Then get a refresh token:
 
 1. Put `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` in `.env`.
 2. Run `python -m scripts.get_refresh_token`. Open the URL it prints, click Allow, and paste the code back.

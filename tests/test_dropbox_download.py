@@ -9,6 +9,7 @@ from dropbox.files import (
 
 from app.errors import (
     FileNotFoundError,
+    InvalidRequestError,
     ProviderError,
 )
 
@@ -83,3 +84,12 @@ def test_dropbox_download_dropbox_exception():
 
     with pytest.raises(Exception):
         storage.download("/docs/report.pdf")
+
+# Use the SDK’s LookupError.not_file to simulate a Dropbox error indicating that the path is not a file. The test should assert that the appropriate InvalidRequestError is raised with the expected message.
+def test_dropbox_download_not_file_error():
+    mock_client = Mock()
+    mock_client.files_download.side_effect = download_error(LookupError.not_file)
+    storage = DropboxStorage(client=mock_client)
+
+    with pytest.raises(InvalidRequestError, match="Path is not a file: /docs/not_a_file"):
+        storage.download("/docs/not_a_file")

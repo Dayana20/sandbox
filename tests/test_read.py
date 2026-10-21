@@ -6,6 +6,10 @@ from app.errors import InvalidRequestError, PermissionDeniedError, ProviderError
 from app.main import app
 from tests.fakes import FakeDocumentStorage
 
+from app.providers.dropbox.storage import DropboxStorage
+from requests.exceptions import ReadTimeout
+from unittest.mock import Mock
+
 
 client = TestClient(app)
 
@@ -95,3 +99,17 @@ def test_get_metadata_storage_errors(error, status, code):
 
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
+
+
+def test_get_metadata_dropbox_timeout():
+    mock_client = Mock()
+    mock_client.files_get_metadata.side_effect = ReadTimeout("Request timed out")
+    storage = DropboxStorage(client=mock_client)
+
+    app.dependency_overrides[get_document_storage] = lambda: storage
+
+    response = get_metadata("/report.pdf")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "provider_error"

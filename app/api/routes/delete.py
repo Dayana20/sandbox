@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.api.responses import error_responses
 from app.validation import validate_path
 from app.dependencies import get_document_storage
 from app.providers.base import DocumentStorage
@@ -11,7 +12,7 @@ router = APIRouter(
 )
 
 
-@router.delete("", status_code=204)
+@router.delete("", status_code=204, responses=error_responses(400, 403, 404, 502, 503))
 def delete_file(
     path: str | None = None,
     storage: DocumentStorage = Depends(get_document_storage),
