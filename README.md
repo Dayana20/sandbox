@@ -22,25 +22,55 @@ Paths are absolute inside the Dropbox app folder, e.g. `/docs/report.pdf`.
 
 `FileResource` (`app/models/file.py`) has `id`, `name`, `path`, `size`, and optional `modified_at`.
 
-Storage failures are the exceptions in `app/errors.py`. Import `FileNotFoundError` from there. `app/main.py` returns:
+## Errors
+
+Every failed request returns the same JSON shape, whichever endpoint it came from:
 
 ```json
-{ "error": { "code": "not_found", "message": "..." } }
+{ "error": { "code": "not_found", "message": "File not found: /docs/report.pdf" } }
 ```
 
-| Exception | Status | Code |
-| --- | --- | --- |
-| `InvalidRequestError` | 400 | `invalid_request` |
-| `PermissionDeniedError` | 403 | `permission_denied` |
-| `FileNotFoundError` | 404 | `not_found` |
-| `FileConflictError` | 409 | `conflict` |
-| `ProviderError` | 502 | `provider_error` |
+`code` is the stable part of the contract; callers should branch on it. `message` is a short human-readable explanation and may change. Every response, success or failure, has an `X-Request-ID` header that matches the server's failure log.
+
+| Status | Code | Raised as | When it happens | Retry? |
+| --- | --- | --- | --- | --- |
+| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (e.g. `path` without a leading `/`), the path is a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
+| 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
+| 404 | `not_found` | `FileNotFoundError` | Nothing exists at `path`, including a repeated delete or move | No |
+| 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
+| 502 | `provider_error` | `ProviderError` | Dropbox failed, timed out, was unreachable, or rate limited us | Yes, after a short wait. For upload, move and delete, first check whether the change already happened |
+| 503 | `provider_not_configured` | `StorageNotConfiguredError` | The server has no Dropbox credentials set | Not until the server is configured |
+| 500 | `internal_error` | any other exception | A bug in the service. The message is always `Internal server error`; details stay in the server log | Maybe later; report it with the request id |
+
+The mapping lives in one place, `ERRORS` in `app/main.py`. Dropbox errors are turned into these exceptions inside `app/providers/dropbox/error_mapping.py`, so callers never see Dropbox exceptions or Dropbox error text.
+
+**Public:** the status code, the `code`, our short `message`, and the request id.
+
+**Internal (server logs only):** the original Dropbox exception and error union, Dropbox's request id, and the operation that failed. Tokens, file contents and Dropbox's free-text messages are never logged or returned.
+
+### Failure logs
+
+`app/main.py` writes one log line for every failed request (logger `app.requests`):
+
+```
+request_failed operation=read_metadata error=not_found status=404 provider=no request_id=3f9c...
+```
+
+| Field | Meaning |
+| --- | --- |
+| `operation` | The route that handled the request (`upload_file`, `read_metadata`, `download_file`, `move_file`, `delete_file`) |
+| `error` | The error `code` returned to the caller |
+| `status` | The HTTP status returned |
+| `provider` | `yes` if Dropbox was called and failed, `no` if our own checks rejected the request |
+| `request_id` | Same value as the `X-Request-ID` response header. A caller can send its own |
+
+4xx failures are logged at `WARNING`, 5xx at `ERROR`. Unexpected bugs (500) are logged separately as `internal_error method=... path=... status=500 error=<exception type> request_id=...`, without the exception message. The line has no error message, query values, request body or credentials, and no stack trace. When Dropbox was involved, the Dropbox-level detail is in the separate `dropbox_error` line below.
 
 ## Storage
 
 - `get_document_storage()` creates a Dropbox client from the credentials in `.env` and returns `DropboxStorage`.
 - `to_file_resource()` maps Dropbox file metadata onto `FileResource`.
-- `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the shared exceptions above.
+- `app/providers/dropbox/error_mapping.py` turns Dropbox SDK errors into the errors listed in [Errors](#errors).
 - `FakeDocumentStorage` (`tests/fakes.py`) keeps files in memory and raises `FileNotFoundError` for a missing path.
 
 ## Provider boundary
@@ -345,6 +375,7 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | `test_dropbox_error_logging.py` | Dropbox failures are logged once with operation, path, error, Dropbox error and request id. Outages log at `ERROR` without a stack trace or response body. The token is never logged. Our own refusals and successes are not logged. |
 | `test_download.py` | `GET /files/download` with fake storage: returned bytes, empty content, missing path/file, and storage errors |
 | `test_dropbox_download.py` | `DropboxStorage.download` with a mocked Dropbox client: returned bytes and Dropbox error mapping |
+| `test_failure_logging.py` | One failure log line per failed request with operation, code, status, provider and request id; nothing logged on success; no secrets or messages in the log; caller's `X-Request-ID` reused |
 | `test_upload.py` | `POST /files` with the fake storage: success, missing or bad input, file too large, 409 on duplicate path, Dropbox errors |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
