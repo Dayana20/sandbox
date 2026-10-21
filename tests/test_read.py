@@ -100,8 +100,7 @@ def test_get_metadata_storage_errors(error, status, code):
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
 
-# add an API test that injects a DropboxStorage with a mocked client that times out, calls /files/metadata with a valid path, and asserts 502 plus response.json()["error"]["code"] == "provider_error"
-# should return ReadTimeout error
+
 def test_get_metadata_dropbox_timeout():
     mock_client = Mock()
     mock_client.files_get_metadata.side_effect = ReadTimeout("Request timed out")
