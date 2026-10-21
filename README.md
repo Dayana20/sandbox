@@ -318,6 +318,8 @@ How it works: the route checks `path` with `validate_path` and calls `storage.de
 
 ## Tests
 
+The testing strategy (what we test, why, and known gaps) is in [TESTING.md](TESTING.md).
+
 Fast tests use the in-memory fake and mocked Dropbox clients. They need no Dropbox token and no network:
 
 ```powershell
