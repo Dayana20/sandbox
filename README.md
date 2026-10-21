@@ -378,7 +378,7 @@ How it behaves:
 - **Bad cache data:** a value in Redis that is not valid JSON, does not fit `FileResource`, or cannot be decoded is treated as a miss. `cache_error` is logged with the exception type only, never the stored contents. Dropbox is called, the fresh result is returned, and the bad value is overwritten with valid metadata. The request does not fail.
 - **Path casing:** Dropbox treats `/Docs/A.pdf` and `/docs/a.pdf` as one file, so the cache key uses the lower-cased path and both spellings share one entry (reads, and invalidation on upload, move and delete). Only the key is lower-cased. Dropbox still receives the path exactly as the caller sent it and the cached `FileResource` keeps Dropbox's `path_display`. This assumes the provider ignores case like Dropbox does. A case-sensitive provider would need a different key function (`metadata_key`).
 - **Redis down:** the failure is logged as `cache_error` (exception type only) and the call carries on with Dropbox. Callers never see a Redis error. A dead Redis adds up to about half a second per Redis call, because of the 0.5 second timeouts.
-- **Logs:** `cache_hit`, `cache_miss`, `cache_write`, `cache_invalidate` and `cache_error`, each with the path. File contents, tokens and the Redis URL are never logged.
+- **Logs:** `cache_hit`, `cache_miss`, `cache_write`, `cache_invalidate` and `cache_error`. Like every other log line in this service, they never contain the file path: the hit, miss, write and invalidate lines show a short one-way `key` id instead (the first 12 hex characters of the SHA-256 of the lower-cased path), so one file always logs the same id whatever its letter case. File contents, tokens and the Redis URL are never logged.
 
 **What our application guarantees**
 

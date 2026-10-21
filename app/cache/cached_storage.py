@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from collections.abc import Callable
 from typing import TypeVar
@@ -21,6 +22,13 @@ def metadata_key(path: str) -> str:
     # must share one cache entry. Only the key is lower-cased. The provider is
     # still called with the path exactly as the caller sent it.
     return f"{KEY_PREFIX}{path.lower()}"
+
+
+def key_id(path: str) -> str:
+    # File paths are never logged, because file names can be private. Logs show
+    # this short one-way id instead. It is built from the same lower-cased path
+    # as the cache key, so every spelling of one file logs the same id.
+    return hashlib.sha256(path.lower().encode()).hexdigest()[:12]
 
 
 class CachedDocumentStorage:
@@ -162,7 +170,7 @@ class CachedDocumentStorage:
             return None, True
 
         if raw is None:
-            logger.info("cache_miss path=%s", path)
+            logger.info("cache_miss key=%s", key_id(path))
             return None, True
 
         try:
@@ -172,7 +180,7 @@ class CachedDocumentStorage:
             self._log_error("read", exc)
             return None, True
 
-        logger.info("cache_hit path=%s", path)
+        logger.info("cache_hit key=%s", key_id(path))
         return metadata, True
 
     def _write(self, path: str, metadata: FileResource) -> None:
@@ -187,7 +195,7 @@ class CachedDocumentStorage:
             return
 
         logger.info(
-            "cache_write path=%s ttl_seconds=%s", path, self.ttl_seconds
+            "cache_write key=%s ttl_seconds=%s", key_id(path), self.ttl_seconds
         )
 
     def _invalidate(self, *paths: str) -> None:
@@ -198,7 +206,9 @@ class CachedDocumentStorage:
             self._log_error("invalidate", exc)
             return
 
-        logger.info("cache_invalidate paths=%s", ",".join(paths))
+        logger.info(
+            "cache_invalidate keys=%s", ",".join(key_id(path) for path in paths)
+        )
 
     def _log_error(self, operation: str, exc: Exception) -> None:
         # Only the exception type. The message can contain connection details.

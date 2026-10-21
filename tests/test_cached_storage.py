@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from app.cache.cached_storage import CachedDocumentStorage, metadata_key
+from app.cache.cached_storage import CachedDocumentStorage, key_id, metadata_key
 from app.cache.redis_client import get_redis_client
 from app.core.config import settings
 from app.dependencies import get_document_storage
@@ -639,6 +639,33 @@ def test_cache_events_are_logged(cached, caplog):
 
     for event in ("cache_miss", "cache_write", "cache_hit", "cache_invalidate"):
         assert event in caplog.text
+
+
+def test_cache_logs_never_contain_the_file_path(cached, caplog):
+    with caplog.at_level(logging.DEBUG, logger="app.cache.cached_storage"):
+        cached.get_metadata(PATH)
+        cached.get_metadata(PATH)
+        cached.move(PATH, "/private-folder/new-name.pdf")
+        cached.delete("/private-folder/new-name.pdf")
+
+    assert caplog.text
+    assert PATH not in caplog.text
+    assert PATH.lower() not in caplog.text.lower()
+    assert "private-folder" not in caplog.text
+    assert "new-name" not in caplog.text
+
+
+def test_cache_logs_show_the_same_key_id_for_every_spelling_of_a_path(
+    cached, caplog
+):
+    with caplog.at_level(logging.INFO, logger="app.cache.cached_storage"):
+        cached.get_metadata(PATH)
+        cached.get_metadata(PATH.upper())
+
+    assert f"cache_write key={key_id(PATH)}" in caplog.text
+    assert f"cache_hit key={key_id(PATH.upper())}" in caplog.text
+    assert key_id(PATH) == key_id(PATH.upper())
+    assert len(key_id(PATH)) == 12
 
 
 # --- through the HTTP API and the dependency wiring --------------------------
