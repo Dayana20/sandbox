@@ -74,8 +74,8 @@ The coordinator is chosen in the milestone plan, and is a different person for e
 
 | Release | Tag | Coordinator | Verifier |
 | --- | --- | --- | --- |
-| Milestone 1 | `1.0.0` | | |
-| Review (milestone 2) | `1.0.1` | Shini | Dayana |
+| Milestone 1 | `1.0.0` | Dayana | Not recorded |
+| Review (milestone 2) | `1.0.1` | Shini (tag created by Dayana) | Dayana |
 | Final (milestone 3) | `v1.1.0` | Yashwanth | Dayana |
 
 ### A defective release

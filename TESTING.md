@@ -30,7 +30,7 @@ Each layer answers a different question, so a bug shows up in the layer that own
 | Layer | What stands in for Dropbox | What it proves | Files |
 | --- | --- | --- | --- |
 | Application rules | nothing, plain function calls | Path rules are right on their own | `test_validation.py` |
-| HTTP API | `FakeDocumentStorage` (in-memory), injected with `app.dependency_overrides[get_document_storage]` | Status codes, response bodies, error shape, and that bad input never reaches storage | `test_upload.py`, `test_read.py`, `test_download.py`, `test_update.py`, `test_delete.py`, `test_error_style.py`, `test_storage_foundation.py`, `test_openapi.py`, `test_health.py` |
+| HTTP API | `FakeDocumentStorage` (in-memory), injected with `app.dependency_overrides[get_document_storage]` | Status codes, response bodies, error shape, and that bad input never reaches storage | `test_upload.py`, `test_read.py`, `test_download.py`, `test_update.py`, `test_delete.py`, `test_error_style.py`, `test_internal_error.py`, `test_storage_foundation.py`, `test_openapi.py`, `test_health.py` |
 | Provider boundary | a `Mock()` Dropbox client that returns or raises real Dropbox SDK objects | We call Dropbox correctly and turn every Dropbox error into our error | `test_dropbox_*.py`, `test_dependencies.py` |
 | Real provider | real Dropbox | Our assumptions about Dropbox actually hold | `tests/integration/` |
 
@@ -55,6 +55,7 @@ Tests check what a caller can observe (status, body, stored bytes), not private 
 
 - **Contract:** metadata returns a `FileResource`; download returns the exact bytes. A missing file is `404`; a folder is `400`. Reading changes nothing.
 - **Cases:** success, missing file, missing or bad path, metadata does not change storage, empty file, special characters, spaces, long and nested paths, `Content-Disposition` encoding of quotes and non-ASCII names, each storage error, a Dropbox timeout becomes `502`.
+- **Live:** read metadata of a real file, a missing path returns `404`, downloading a real folder returns `400`.
 
 ### Update: `PATCH /files` (rename or move)
 
@@ -71,7 +72,7 @@ Tests check what a caller can observe (status, body, stored bytes), not private 
 ### Error shape (every route)
 
 - **Contract:** every error is exactly `{"error": {"code": "...", "message": "..."}}`.
-- **Cases:** `test_error_style.py` sends one bad request of each kind to each route: unknown URL (`404 not_found`), wrong method (`405 method_not_allowed`), body that is not JSON, wrongly typed fields, our own path checks, missing files, upload conflict. `test_storage_foundation.py` checks each of our exceptions maps to its status and code. `test_openapi.py` checks Swagger lists the same error responses.
+- **Cases:** `test_error_style.py` sends one bad request of each kind to each route: unknown URL (`404 not_found`), wrong method (`405 method_not_allowed`), body that is not JSON, wrongly typed fields, our own path checks, missing files, upload conflict, and an unexpected bug in our code (`500 internal_error`). `test_internal_error.py` checks the catch-all logs the failure without hiding our expected errors. `test_storage_foundation.py` checks each of our exceptions maps to its status and code. `test_openapi.py` checks Swagger lists the same error responses.
 
 ### Dropbox error mapping and logging
 
@@ -103,10 +104,8 @@ With the shared validator it passes. Likewise, 7 tests in `test_error_style.py` 
 
 ## Gaps and known limitations
 
-- **Unexpected bugs (500)** still return plain `Internal Server Error`. Yashwanth's catch-all handler (#17) will add `internal_error`; add a case to `test_error_style.py` when it merges.
 - **Network failures are not logged.** A timeout or connection error becomes `502 provider_error`, but the Dropbox error logger only logs Dropbox SDK exceptions, so these leave no log line. A timeout is only tested for metadata.
 - **Uncertain writes are not tested.** If an upload times out after Dropbox saved the file, the caller gets `502`, and retrying gets `409`. That outcome is not simulated in a test or documented as a retry rule yet.
-- **`tests/test_download_dropbox.py` calls real Dropbox from the fast suite** when credentials are in `.env`, and writes to `/test_folder_for_download` instead of `/integration-tests/`. It skips in CI. It should move to `tests/integration/`.
 - **`Allow` header on 405 is incomplete for `/files`:** it lists only `POST`, because upload, move and delete are separate routers. Behaviour of FastAPI, not changed.
 - **No concurrency tests.** Two clients moving or uploading the same path at once rely on Dropbox's own conflict handling.
 - **No coverage target.** The behaviours above are what the tests establish; we have not measured line coverage.
