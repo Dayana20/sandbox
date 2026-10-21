@@ -36,24 +36,20 @@ OWNER_CHANGED = -1
 # KEYS[1] the record. ARGV[1] the owner we expect.
 # They return APPLIED, RECORD_MISSING, or OWNER_CHANGED (the record belongs to
 # another reservation, or is unreadable, so it is not ours to touch).
-_REPLACE_IF_OWNER = """
+_OWNER_CHECK = """
 local raw = redis.call("GET", KEYS[1])
 if not raw then return 0 end
 local ok, record = pcall(cjson.decode, raw)
 if not ok or type(record) ~= "table" or record["owner"] ~= ARGV[1] then
     return -1
 end
+"""
+# ARGV[2] the new record, ARGV[3] its TTL in seconds
+_REPLACE_IF_OWNER = _OWNER_CHECK + """
 redis.call("SET", KEYS[1], ARGV[2], "EX", tonumber(ARGV[3]))
 return 1
-"""  # ARGV[2] the new record, ARGV[3] its TTL in seconds
-
-_DELETE_IF_OWNER = """
-local raw = redis.call("GET", KEYS[1])
-if not raw then return 0 end
-local ok, record = pcall(cjson.decode, raw)
-if not ok or type(record) ~= "table" or record["owner"] ~= ARGV[1] then
-    return -1
-end
+"""
+_DELETE_IF_OWNER = _OWNER_CHECK + """
 redis.call("DEL", KEYS[1])
 return 1
 """
@@ -173,16 +169,12 @@ class RedisIdempotencyStore:
 
             Only deletes the record if it is still ours. Returns whether it did.
         """
-        self._client(key_hash)
-        script = self._delete_script
-        if script is None:
-            raise self._unavailable(key_hash, "release", RuntimeError("no script"))
-
         return self._run(
             key_hash,
             "release",
             f"{IN_PROGRESS}->released",
-            lambda: script(keys=[redis_key(key_hash)], args=[owner]),
+            self._delete_script,
+            [owner],
         )
 
     def _replace_if_owner(
@@ -193,24 +185,29 @@ class RedisIdempotencyStore:
         new_state: str,
         new_record: str,
     ) -> bool:
-        self._client(key_hash)
-        script = self._replace_script
-        if script is None:
-            raise self._unavailable(key_hash, operation, RuntimeError("no script"))
-
         return self._run(
             key_hash,
             operation,
             f"{IN_PROGRESS}->{new_state}",
-            lambda: script(
-                keys=[redis_key(key_hash)],
-                args=[owner, new_record, self.ttl_seconds],
-            ),
+            self._replace_script,
+            [owner, new_record, self.ttl_seconds],
         )
 
-    def _run(self, key_hash: str, operation: str, transition: str, call: Any) -> bool:
+    def _run(
+        self,
+        key_hash: str,
+        operation: str,
+        transition: str,
+        script: Any,
+        args: list[Any],
+    ) -> bool:
+        """Run an owner-checked script. True only if the change was applied."""
+        self._client(key_hash)  # refuses when REDIS_URL is not set
+        if script is None:
+            raise self._unavailable(key_hash, operation, RuntimeError("no script"))
+
         try:
-            result = int(call())
+            result = int(script(keys=[redis_key(key_hash)], args=args))
         except (RedisError, ValueError, TypeError) as exc:
             raise self._unavailable(key_hash, operation, exc) from exc
 

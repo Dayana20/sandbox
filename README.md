@@ -300,7 +300,7 @@ Ownership only stops an older request from corrupting a newer reservation. It do
 
 ### Redis unavailable (fails closed)
 
-When a key is supplied and Redis can't be used, the upload is refused with `503 idempotency_unavailable` and Dropbox is not called. Uploading anyway could create a duplicate while claiming it could not. "Can't be used" covers: `REDIS_URL` not set, Redis down or timing out, and a record we can't read. Redis messages are logged by exception type only and are never returned. Uploads without a key do not depend on Redis at all.
+When a key is supplied and Redis can't be used, the upload is refused with `503 idempotency_unavailable` and Dropbox is not called. Uploading anyway could create a duplicate while claiming it could not. "Can't be used" covers: `REDIS_URL` not set, Redis down or timing out, and a record we can't read. Redis messages are logged by exception type only and are never returned.
 
 This is the opposite of a cache, where a Redis failure is ignored. Here Redis is part of the correctness of the request.
 
@@ -313,12 +313,10 @@ Records live in Redis, not in the app, so an app restart forgets nothing: a new 
 What this application guarantees (the code in `app/idempotency/`, with tests):
 
 - While the Redis idempotency record is present and unexpired, one key never leads to a second Dropbox upload from this service: not for a repeat, an overlapping request, a restart, or an uncertain outcome. Once the record expires, reuse of the key is treated as a new request.
-- The protection window is only as long as the record. The TTL starts when the key is reserved (`in_progress`), so `IDEMPOTENCY_TTL_SECONDS` must be longer than the longest upload you expect.
 - A repeat with the same request returns the first result. Reusing a key for a different request is refused.
 - A request can only change or delete the record it claimed. If its record expired and another request claimed the key, the older request cannot overwrite, mark `uncertain`, or delete the newer reservation.
-- Requests refused locally leave no record. Failures Dropbox clearly rejected release the key.
 - Nothing is uploaded under a key when Redis can't enforce it.
-- Keys and file contents are never logged.
+- Raw keys, file contents and file paths are never logged.
 
 What Redis provides: atomic `SET NX`, Lua scripts that run as one atomic step (our owner check plus change), and removing a record when its TTL runs out. Redis knows nothing about uploads. Dropbox provides `WriteMode.add` with `strict_conflict`, which refuses to overwrite a file at the same path. It has no idea about our keys. The idempotency guarantee comes from our integration, not from either of them.
 
@@ -329,7 +327,7 @@ What it does not guarantee:
 - **Uncertain uploads:** they stay blocked, not resolved. We don't check whether the file exists.
 - **If Redis is slow when claiming:** a claim that Redis applied but whose answer timed out is reported as `503`. The key then stays `in_progress` until it expires, although nothing was uploaded. This errs on the side of no duplicates.
 - **If the result can't be saved** after a good upload: if Dropbox succeeds but the service cannot write the `succeeded` state to Redis, the original caller still receives `201`, because the upload really happened and reporting a failure would only invite a retry. The record is never falsely marked `succeeded`. It stays `in_progress` (with no stored response and no new TTL) until it expires, and the problem is logged as `idempotency_error operation=save_succeeded`. A later retry with the same key and request gets `409 idempotency_in_progress` and does not call Dropbox again, because the service cannot prove to that caller that the first upload was recorded. The cost is that the retry cannot get the stored result until the key expires.
-- **Long-running uploads:** the service does not renew an in-progress reservation while an upload is running. If an upload lasts longer than the configured TTL, the reservation may expire before the upload completes. A request with the same key that arrives after that finds no record, claims the key, and can start a second upload. There is no heartbeat, lease renewal or distributed lock. Set `IDEMPOTENCY_TTL_SECONDS` well above the longest upload. Ownership does not remove this limit: it does not stop the second upload. It only means that when the first upload finally finishes, it cannot overwrite, mark `uncertain` or delete the newer request's reservation (see Reservation ownership).
+- **Long-running uploads:** the service does not renew an in-progress reservation while an upload is running. If an upload lasts longer than the configured TTL, the reservation may expire before the upload completes. A request with the same key that arrives after that finds no record, claims the key, and can start a second upload. There is no heartbeat, lease renewal or distributed lock. Set `IDEMPOTENCY_TTL_SECONDS` well above the longest upload. Ownership does not remove this limit (see Reservation ownership).
 - **Uploads with no key** are not protected at all.
 
 ### Try it

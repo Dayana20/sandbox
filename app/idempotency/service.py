@@ -25,14 +25,10 @@ logger = logging.getLogger(__name__)
 
 MAX_KEY_LENGTH = 255
 
-# Upload failures that prove the provider did not create the file. Each one
-# is an answer Dropbox gave to this request, so nothing was written:
-#   InvalidRequestError   Dropbox refused the path or name (or the input)
-#   PermissionDeniedError Dropbox refused the credentials or write access
-#   FileConflictError     a file is already at the path (strict_conflict, no
-#                         overwrite, no rename)
-# For these the record is released, so the caller can fix the input and use
-# the same key again. Every other failure, ProviderError included, is
+# Upload failures that prove the provider did not create the file: each is an
+# answer Dropbox gave to this request (bad path or name, no permission, or a
+# file already at the path). The record is released, so the caller can fix the
+# input and reuse the key. Every other failure, ProviderError included, is
 # treated as "outcome unknown".
 DEFINITIVE_FAILURES = (
     InvalidRequestError,

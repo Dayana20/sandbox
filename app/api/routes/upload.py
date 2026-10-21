@@ -23,7 +23,11 @@ router = APIRouter(
 )
 
 
-@router.post("", status_code=201, responses=error_responses(400, 403, 409, 502, 503))
+@router.post(
+    "",
+    status_code=201,
+    responses=error_responses(400, 403, 409, 502, 503, idempotency=True),
+)
 def upload_file(
     file: UploadFile | None = File(None),
     path: str | None = Form(None),

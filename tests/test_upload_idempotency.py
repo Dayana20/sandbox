@@ -125,8 +125,9 @@ def client(storage, redis_client):
     return make_client(storage, make_service(redis_client))
 
 
-def post(client, path=PATH, content=b"hello", key=KEY, filename="a.txt"):
-    headers = {} if key is None else {"Idempotency-Key": key}
+def post(client, path=PATH, content=b"hello", key=KEY, filename="a.txt", **headers):
+    if key is not None:
+        headers["Idempotency-Key"] = key
     data = {} if path is None else {"path": path}
 
     return client.post(
@@ -364,18 +365,28 @@ def test_conflict_and_uncertain_state_also_survive_a_restart(redis_client):
 # --- uncertain provider outcome --------------------------------------------------
 
 
-def test_provider_error_marks_the_record_uncertain_and_blocks_a_retry(
-    redis_client,
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (ProviderError("Dropbox could not upload"), 502, "provider_error"),
+        (RuntimeError("connection reset by peer"), 500, "internal_error"),
+        # Not something Dropbox upload produces, so we can't call it definitive.
+        (FileNotFoundError("File not found"), 404, "not_found"),
+    ],
+)
+def test_any_non_definitive_failure_marks_the_record_uncertain_and_blocks_a_retry(
+    error, status, code, redis_client
 ):
-    error = ProviderError("Dropbox could not upload")
     storage = FailingStorage(error)
-    client = make_client(storage, make_service(redis_client))
+    client = make_client(
+        storage, make_service(redis_client), raise_server_exceptions=False
+    )
 
     first = post(client)
 
-    # the first caller still gets the provider's error
-    assert first.status_code == 502
-    assert error_code(first) == "provider_error"
+    # the first caller still gets the original error
+    assert first.status_code == status
+    assert error_code(first) == code
     assert storage.upload_calls == 1
     assert stored_record(redis_client)["state"] == "uncertain"
 
@@ -387,42 +398,6 @@ def test_provider_error_marks_the_record_uncertain_and_blocks_a_retry(
     assert "may have completed" in retry.json()["error"]["message"]
     assert storage.upload_calls == 1
     assert PATH not in storage.files
-
-
-def test_unexpected_exception_is_also_uncertain(redis_client):
-    storage = FailingStorage(RuntimeError("connection reset by peer"))
-    client = make_client(
-        storage,
-        make_service(redis_client),
-        raise_server_exceptions=False,
-    )
-
-    first = post(client)
-    retry = post(client)
-
-    assert first.status_code == 500
-    assert retry.status_code == 409
-    assert error_code(retry) == "idempotency_outcome_unknown"
-    assert storage.upload_calls == 1
-
-
-@pytest.mark.parametrize(
-    "error",
-    [
-        ProviderError("Dropbox is down"),
-        # Not something Dropbox upload produces, so we can't call it definitive.
-        FileNotFoundError("File not found"),
-    ],
-)
-def test_only_known_definitive_errors_release_the_key(error, redis_client):
-    storage = FailingStorage(error)
-    client = make_client(storage, make_service(redis_client))
-
-    post(client)
-
-    assert stored_record(redis_client)["state"] == "uncertain"
-    assert error_code(post(client)) == "idempotency_outcome_unknown"
-    assert storage.upload_calls == 1
 
 
 def test_a_different_request_after_uncertain_is_a_conflict(redis_client):
@@ -572,7 +547,7 @@ def test_bad_key_is_rejected_even_when_redis_is_down(
 def test_redis_down_with_a_key_refuses_the_upload(storage, broken_redis, caplog):
     client = make_client(storage, make_service(broken_redis))
 
-    with caplog.at_level(logging.INFO, logger="app.idempotency"):
+    with caplog.at_level(logging.INFO):
         response = post(client)
 
     assert response.status_code == 503
@@ -585,6 +560,9 @@ def test_redis_down_with_a_key_refuses_the_upload(storage, broken_redis, caplog)
     assert "redis is down" not in response.text
     assert "redis is down" not in caplog.text
     assert "idempotency_error" in caplog.text
+    # Raised from a Redis exception, so it has a __cause__. The shared "cause
+    # means provider" rule must not log it as a Dropbox failure.
+    assert "error=idempotency_unavailable status=503 provider=no" in caplog.text
 
 
 def test_redis_not_configured_with_a_key_refuses_the_upload(
@@ -855,31 +833,27 @@ def test_stale_succeeded_write_with_a_different_fingerprint_changes_nothing(
     assert stored_record(redis_client)["response"] == RESPONSE_B
 
 
-def test_stale_uncertain_transition_leaves_the_newer_record_alone(
-    store, redis_client
+@pytest.mark.parametrize(
+    "stale_change",
+    [
+        pytest.param(lambda s, owner: s.mark_uncertain(hash_key(KEY), owner, FP_A), id="mark_uncertain"),
+        pytest.param(lambda s, owner: s.release(hash_key(KEY), owner), id="release"),
+    ],
+)
+def test_stale_uncertain_or_release_leaves_the_newer_record_alone(
+    stale_change, store, redis_client
 ):
     owner_a, owner_b = two_reservations(store, redis_client)
     before = stored_record(redis_client)
 
-    applied = store.mark_uncertain(hash_key(KEY), owner_a, FP_A)
+    assert stale_change(store, owner_a) is False
 
-    assert applied is False
+    # not marked uncertain, not deleted: B's record is exactly as B made it
+    assert redis_client.exists(redis_key(hash_key(KEY))) == 1
     assert stored_record(redis_client) == before
     assert before["state"] == "in_progress"
     assert before["owner"] == owner_b
     assert before["fingerprint"] == FP_B
-
-
-def test_stale_release_does_not_delete_the_newer_record(store, redis_client):
-    owner_a, owner_b = two_reservations(store, redis_client)
-    before = stored_record(redis_client)
-
-    applied = store.release(hash_key(KEY), owner_a)
-
-    assert applied is False
-    assert redis_client.exists(redis_key(hash_key(KEY))) == 1
-    assert stored_record(redis_client) == before
-    assert stored_record(redis_client)["owner"] == owner_b
 
 
 def test_current_owner_can_save_succeeded(store, redis_client):
@@ -980,23 +954,10 @@ def test_ownership_checks_run_inside_redis_not_as_get_then_set(redis_client):
             self.inner = inner
             self.python_side_calls = []
 
-        def get(self, *args, **kwargs):
-            self.python_side_calls.append("get")
-            return self.inner.get(*args, **kwargs)
-
-        def set(self, *args, **kwargs):
-            self.python_side_calls.append("set")
-            return self.inner.set(*args, **kwargs)
-
-        def delete(self, *args, **kwargs):
-            self.python_side_calls.append("delete")
-            return self.inner.delete(*args, **kwargs)
-
-        def pipeline(self, *args, **kwargs):
-            self.python_side_calls.append("pipeline")
-            return self.inner.pipeline(*args, **kwargs)
-
         def __getattr__(self, name):
+            # Fetching one of these to call it is a Python-side Redis command.
+            if name in ("get", "set", "delete", "pipeline"):
+                self.python_side_calls.append(name)
             return getattr(self.inner, name)
 
     spy = SpyRedis(redis_client)
@@ -1212,24 +1173,31 @@ def test_hash_key_is_sha256_of_the_key():
 # --- logging -----------------------------------------------------------------
 
 
-def test_events_are_logged_without_the_raw_key_or_contents(
+def test_events_are_logged_without_the_raw_key_contents_or_path(
     storage, redis_client, caplog
 ):
     key = "secret-customer-key-42"
     secret_bytes = b"top secret file contents"
+    private = "/private-folder/secret-report.pdf"
     client = make_client(storage, make_service(redis_client))
 
-    with caplog.at_level(logging.INFO, logger="app.idempotency"):
-        post(client, key=key, content=secret_bytes)  # reserved
-        post(client, key=key, content=secret_bytes)  # replay
-        post(client, key=key, content=b"other")  # conflict
+    # root logger: also covers milestone-3's request_failed line for the 409
+    with caplog.at_level(logging.DEBUG):
+        post(client, path=private, key=key, content=secret_bytes)  # reserved
+        post(client, path=private, key=key, content=secret_bytes)  # replay
+        post(client, path=private, key=key, content=b"other")  # conflict
 
-    for event in ("idempotency_reserved", "idempotency_replay", "idempotency_conflict"):
+    for event in (
+        "idempotency_reserved",
+        "idempotency_replay",
+        "idempotency_conflict",
+        "request_failed",
+    ):
         assert event in caplog.text, event
 
-    assert key not in caplog.text
-    assert "top secret" not in caplog.text
     assert hash_key(key)[:12] in caplog.text
+    for secret in (key, "top secret", private, "private-folder", "secret-report"):
+        assert secret not in caplog.text, secret
 
 
 def test_in_progress_and_uncertain_events_are_logged(redis_client, caplog):
@@ -1273,71 +1241,17 @@ def test_idempotency_errors_use_the_shared_error_style_and_are_never_a_500(
     client = make_client(storage, service, raise_server_exceptions=False)
 
     with caplog.at_level(logging.INFO):
-        response = post(client)
+        response = post(client, **{"X-Request-ID": "trace-me-123"})
 
     assert response.status_code == status
     assert set(response.json()) == {"error"}
     assert set(response.json()["error"]) == {"code", "message"}
     assert error_code(response) == code
     assert response.json()["error"]["message"] == error.message
-    assert response.headers["X-Request-ID"]
+    assert response.headers["X-Request-ID"] == "trace-me-123"
     assert "internal_error" not in caplog.text
     assert (
         f"request_failed operation=upload_file error={code} status={status} "
-        "provider=no"
+        "provider=no request_id=trace-me-123"
     ) in caplog.text
     assert storage.upload_calls == 0
-
-
-def test_idempotency_failures_carry_the_callers_request_id(storage, caplog):
-    service = Mock()
-    service.run_upload.side_effect = IdempotencyConflictError()
-    client = make_client(storage, service)
-
-    with caplog.at_level(logging.INFO):
-        response = client.post(
-            "/files",
-            data={"path": PATH},
-            files={"file": ("a.txt", b"hello")},
-            headers={"Idempotency-Key": KEY, "X-Request-ID": "trace-me-123"},
-        )
-
-    assert response.headers["X-Request-ID"] == "trace-me-123"
-    assert "request_id=trace-me-123" in caplog.text
-
-
-def test_redis_outage_is_not_logged_as_a_provider_failure(
-    storage, broken_redis, caplog
-):
-    # The 503 is raised from a Redis exception, so it has a __cause__. The
-    # shared "cause means provider" rule must not mark it as a Dropbox failure.
-    client = make_client(storage, make_service(broken_redis))
-
-    with caplog.at_level(logging.INFO):
-        response = post(client)
-
-    assert response.status_code == 503
-    assert error_code(response) == "idempotency_unavailable"
-    assert "error=idempotency_unavailable status=503 provider=no" in caplog.text
-    assert storage.upload_calls == 0
-
-
-def test_no_log_line_contains_the_file_path(storage, redis_client, caplog):
-    private = "/private-folder/secret-report.pdf"
-    client = make_client(storage, make_service(redis_client))
-
-    with caplog.at_level(logging.DEBUG):
-        first = post(client, path=private, key="path-key")
-        replay = post(client, path=private, key="path-key")
-        conflict = post(client, path=private, content=b"other", key="path-key")
-
-    assert first.status_code == 201
-    assert replay.status_code == 201
-    assert conflict.status_code == 409
-    assert "idempotency_reserved" in caplog.text
-    assert "idempotency_replay" in caplog.text
-    assert "request_failed" in caplog.text
-    assert private not in caplog.text
-    assert "private-folder" not in caplog.text
-    assert "secret-report" not in caplog.text
-    assert "path-key" not in caplog.text
