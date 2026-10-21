@@ -4,6 +4,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -134,15 +135,45 @@ def create_app() -> FastAPI:
         exc: RequestValidationError,
     ):
         first = exc.errors()[0]
-        field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+
+        # A body that isn't JSON at all has no field name, only a character
+        # position, which made the message read "1: JSON decode error".
+        if first["type"] == "json_invalid":
+            message = "request body is not valid JSON"
+        else:
+            field = ".".join(str(part) for part in first["loc"][1:]) or "request"
+            message = f"{field}: {first['msg']}"
 
         return error_response(
             request,
             400,
             "invalid_request",
-            f"{field}: {first['msg']}",
+            message,
             provider=False,
         )
+
+    # FastAPI answers an unknown URL (404) or a wrong method (405) itself,
+    # with {"detail": "..."}. Return our error shape instead, so a caller
+    # never has to handle two formats.
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(
+        request: Request,
+        exc: StarletteHTTPException,
+    ):
+        route = f"{request.method} {request.url.path}"
+
+        if exc.status_code == 404:
+            code, message = "not_found", f"No such endpoint: {route}"
+        elif exc.status_code == 405:
+            code, message = "method_not_allowed", f"Method not allowed: {route}"
+        else:
+            code, message = "http_error", str(exc.detail)
+
+        response = error_response(request, exc.status_code, code, message, provider=False)
+        # Keeps the Allow header FastAPI sets on a 405
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
 
     # Anything not handled above is a bug. Return a fixed message so the
     # caller never sees the exception text, and keep the detail in the log.
