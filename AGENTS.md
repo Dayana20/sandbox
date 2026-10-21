@@ -60,6 +60,8 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 ## Contributing
 
+The full workflow (review, merge, releases) is in [docs/WORKFLOW.md](docs/WORKFLOW.md).
+
 - Branch off `milestone-3`, open a PR into `milestone-3`. Don't push to it directly. Don't merge anything into `main`, `yashwanth` or the `milestone-*-base` branches; they hold the submitted milestones.
 - A teammate reviews and someone other than the author merges.
 - Keep each PR to one feature. Don't mix in unrelated changes.
