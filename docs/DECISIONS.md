@@ -24,7 +24,16 @@ Why the service behaves the way it does, for reviewers and future maintainers. E
 - There's no "replace" operation. Updating a file's contents means `DELETE` then `POST`. Conditional updates (`PUT` with a revision) are the planned way to add safe replacing.
 - Retries need care. If an upload times out after Dropbox has already saved the file, the caller gets `502`, and retrying the same upload then gets `409`. So the README tells callers to check whether the file is already there (`GET /files/metadata`) before retrying an upload, move or delete. This case isn't covered by a test yet (see the known gaps in `TESTING.md`).
 
-**Code and tests:** `DropboxStorage.upload` and `move` in `app/providers/dropbox/storage.py`; `test_upload_same_path_twice`, `test_dropbox_move_conflict_names_destination`.
+**Evidence:**
+- `test_upload_same_path_twice` (fake storage): a second upload returns `409` and `download` still returns the **first** file's bytes.
+- `test_dropbox_upload_success` (mocked Dropbox) checks the exact call: `WriteMode.add`, `autorename=False`, `strict_conflict=True`. Removing any of them would fail this test.
+- `tests/integration/test_upload_dropbox.py` (real Dropbox): uploading to the same path again returns `409`.
+- Moves: `test_move_onto_existing_file_is_refused` (`409`, and neither file changes) and `test_dropbox_move_conflict_names_destination`. Tutorial step 5 shows a move onto an existing file refused with `409` and both files unchanged.
+- Dropbox's documentation for `strict_conflict`: it "forces a conflict even when the target path refers to a file with identical contents". Without it, a repeat upload of the same bytes would quietly return success.
+
+**What would make us revisit it:**
+- **Callers need to replace files.** We'd add a conditional update (`PUT` with the file's current revision) rather than switching uploads to overwrite: the update succeeds only if nobody changed the file since the caller read it, and a stale update still gets `409`.
+- **Retries after timeouts become common.** If clients regularly hit the "502, then 409 on retry" case above, the fix is idempotency keys, so a retried upload returns the original result instead of a conflict.
 
 ## 2. Operations on a folder are refused with `400`
 
@@ -82,5 +91,5 @@ Why the service behaves the way it does, for reviewers and future maintainers. E
   - `request_failed`: the operation, error code, HTTP status, whether Dropbox was involved, and our request id, which is the same `X-Request-ID` the caller receives.
   - `dropbox_error` (only when Dropbox failed): Dropbox's typed error and Dropbox's own request id, for asking Dropbox support.
 
-  Together these are enough to trace any failure without knowing which file it was.
+  Together these are enough to trace any failure without knowing which file it was. One exception sits outside our code: uvicorn's access log prints each request's URL, query string included. Production should run with `--no-access-log` (or a log filter) so paths don't reach the logs that way.
 - **Control characters are rejected in paths.** Newlines or null bytes are never valid in a file name and could corrupt log lines.

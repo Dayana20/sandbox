@@ -295,7 +295,7 @@ request_failed operation=read_metadata error=not_found status=404 provider=yes r
 - `request_failed` has the same id as the response header, so a caller who reports a problem can quote the id and we can find their request.
 - `provider=yes` means Dropbox was called and refused. A bad path (step 7) logs `provider=no`, because it was rejected before Dropbox.
 - `dropbox_error` keeps Dropbox's own error and Dropbox's request id, for asking Dropbox support. The caller never sees it.
-- No file paths, tokens or file contents are written to the log.
+- Our two log lines (`request_failed`, `dropbox_error`) contain no file paths, tokens or file contents. The last line in the screenshot is different: it's uvicorn's own access log, which prints every request's URL, including `?path=...`. To turn that off, for example in production, start the server with `uvicorn app.main:app --no-access-log`.
 
 ## 9. Try it in the browser
 
@@ -309,17 +309,23 @@ Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
 **Run:**
 ```bash
-python -m pytest                     # fast tests: no Dropbox, no network
-python -m pytest tests/integration   # the same flow against real Dropbox
-python -m ruff check .
-python -m mypy app
+python -m pytest && python -m ruff check . && python -m mypy app
 ```
 
 **Expected:** every test passes, and lint and type checks are clean. These are the same checks CI runs on every pull request.
 
+**Actual:**
+```
+246 passed in 1.62s
+All checks passed!
+Success: no issues found in 25 source files
+```
+
 ![Tests, lint and type checks pass](docs/images/10-tests.png)
 
-The integration tests create files under `/integration-tests/` and delete them when they finish. [TESTING.md](TESTING.md) explains what each layer of tests covers and why.
+The screenshot was taken on Python 3.13. The project targets Python 3.10 (`.python-version`), and CI runs these same checks on 3.10 for every pull request. They also pass locally on 3.10.
+
+These are the fast tests: no Dropbox, no network. The live Dropbox tests run separately with `python -m pytest tests/integration`. They create files under `/integration-tests/` and delete them when they finish. [TESTING.md](TESTING.md) explains what each layer of tests covers and why.
 
 ## 11. Clean up
 
