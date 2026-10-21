@@ -4,7 +4,7 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 
 **Team 1:** Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni
 
-**Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
+**Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
 
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
@@ -652,6 +652,28 @@ If you also have Anaconda installed, its `pytest`, `ruff` or `mypy` can run inst
 | `REDIS_URL` | Optional, e.g. `redis://localhost:6379/0`. One Redis serves both features. It turns on the metadata cache (see Metadata caching). Uploads that send an `Idempotency-Key` need it and get `503` without it (see Upload idempotency). Other requests work without Redis. |
 | `METADATA_CACHE_TTL_SECONDS` | How long cached metadata may be stale. Default 60. `0` turns the cache off. |
 | `IDEMPOTENCY_TTL_SECONDS` | How long an Idempotency-Key is remembered. Default `86400` (24 hours). Must be a positive number. |
+
+### Redis (optional)
+
+Redis is only needed for the two extensions: the metadata cache and upload idempotency. Without it every route still works, and only uploads that send an `Idempotency-Key` are refused with `503`.
+
+1. Start Redis. Either one works:
+
+   ```bash
+   brew install redis && brew services start redis      # macOS, runs in the background
+   docker run --rm -p 6379:6379 redis:7-alpine          # any OS with Docker, stops when you close it
+   ```
+
+2. Set it in `.env`:
+
+   ```bash
+   REDIS_URL=redis://localhost:6379/0
+   ```
+
+3. Check it's running: `redis-cli ping` prints `PONG` (with Docker, run `docker exec -it <container> redis-cli ping`).
+4. Restart `uvicorn` so it reads the new `.env`.
+
+To stop Redis: `brew services stop redis`, or `Ctrl+C` in the Docker terminal. Leave `REDIS_URL` empty to run without it.
 
 ### Dropbox credentials
 
