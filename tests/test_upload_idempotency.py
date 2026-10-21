@@ -18,6 +18,9 @@ from app.dependencies import (
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
+    IdempotencyConflictError,
+    IdempotencyInProgressError,
+    IdempotencyOutcomeUnknownError,
     IdempotencyUnavailableError,
     InvalidRequestError,
     PermissionDeniedError,
@@ -1246,3 +1249,95 @@ def test_in_progress_and_uncertain_events_are_logged(redis_client, caplog):
     assert "idempotency_uncertain" in caplog.text
     assert "busy" not in caplog.text
     assert "unsure" not in caplog.text
+
+
+# --- milestone-3 error handling and logging rules ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "error, status, code",
+    [
+        (IdempotencyConflictError, 409, "idempotency_conflict"),
+        (IdempotencyInProgressError, 409, "idempotency_in_progress"),
+        (IdempotencyOutcomeUnknownError, 409, "idempotency_outcome_unknown"),
+        (IdempotencyUnavailableError, 503, "idempotency_unavailable"),
+    ],
+)
+def test_idempotency_errors_use_the_shared_error_style_and_are_never_a_500(
+    error, status, code, storage, caplog
+):
+    service = Mock()
+    service.run_upload.side_effect = error()
+    # raise_server_exceptions=False: a catch-all 500 must show up as a 500
+    # here instead of being re-raised into the test.
+    client = make_client(storage, service, raise_server_exceptions=False)
+
+    with caplog.at_level(logging.INFO):
+        response = post(client)
+
+    assert response.status_code == status
+    assert set(response.json()) == {"error"}
+    assert set(response.json()["error"]) == {"code", "message"}
+    assert error_code(response) == code
+    assert response.json()["error"]["message"] == error.message
+    assert response.headers["X-Request-ID"]
+    assert "internal_error" not in caplog.text
+    assert (
+        f"request_failed operation=upload_file error={code} status={status} "
+        "provider=no"
+    ) in caplog.text
+    assert storage.upload_calls == 0
+
+
+def test_idempotency_failures_carry_the_callers_request_id(storage, caplog):
+    service = Mock()
+    service.run_upload.side_effect = IdempotencyConflictError()
+    client = make_client(storage, service)
+
+    with caplog.at_level(logging.INFO):
+        response = client.post(
+            "/files",
+            data={"path": PATH},
+            files={"file": ("a.txt", b"hello")},
+            headers={"Idempotency-Key": KEY, "X-Request-ID": "trace-me-123"},
+        )
+
+    assert response.headers["X-Request-ID"] == "trace-me-123"
+    assert "request_id=trace-me-123" in caplog.text
+
+
+def test_redis_outage_is_not_logged_as_a_provider_failure(
+    storage, broken_redis, caplog
+):
+    # The 503 is raised from a Redis exception, so it has a __cause__. The
+    # shared "cause means provider" rule must not mark it as a Dropbox failure.
+    client = make_client(storage, make_service(broken_redis))
+
+    with caplog.at_level(logging.INFO):
+        response = post(client)
+
+    assert response.status_code == 503
+    assert error_code(response) == "idempotency_unavailable"
+    assert "error=idempotency_unavailable status=503 provider=no" in caplog.text
+    assert storage.upload_calls == 0
+
+
+def test_no_log_line_contains_the_file_path(storage, redis_client, caplog):
+    private = "/private-folder/secret-report.pdf"
+    client = make_client(storage, make_service(redis_client))
+
+    with caplog.at_level(logging.DEBUG):
+        first = post(client, path=private, key="path-key")
+        replay = post(client, path=private, key="path-key")
+        conflict = post(client, path=private, content=b"other", key="path-key")
+
+    assert first.status_code == 201
+    assert replay.status_code == 201
+    assert conflict.status_code == 409
+    assert "idempotency_reserved" in caplog.text
+    assert "idempotency_replay" in caplog.text
+    assert "request_failed" in caplog.text
+    assert private not in caplog.text
+    assert "private-folder" not in caplog.text
+    assert "secret-report" not in caplog.text
+    assert "path-key" not in caplog.text

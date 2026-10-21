@@ -19,7 +19,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 - `app/idempotency/` - upload `Idempotency-Key` support, independent of the provider: `IdempotencyService` (state machine), `RedisIdempotencyStore`, and the Redis client factory
 - `app/dependencies.py` - `get_document_storage()`, which hands a `DropboxStorage` to the routes, and `get_idempotency_service()`. The Dropbox client is created once and shared (`get_dropbox_client()`)
 - `app/validation.py` - `validate_path()`, the path check every route uses
-- `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`)
+- `app/errors.py` - our errors (`FileNotFoundError`, `FileConflictError`, `InvalidRequestError`, `PermissionDeniedError`, `ProviderError`) and the `Idempotency*` errors for upload keys, which are not storage errors and have their own handler in `app/main.py`
 - `app/models/file.py` - `FileResource`, the response returned by file endpoints
 - `tests/fakes.py` - `FakeDocumentStorage`, an in-memory stand-in for Dropbox
 - `tests/integration/` - tests that call real Dropbox
