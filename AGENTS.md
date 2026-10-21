@@ -8,7 +8,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 ## Code map
 
-- `app/main.py` - creates the FastAPI app and turns our errors into JSON responses
+- `app/main.py` - creates the FastAPI app, maps our errors to JSON responses (`ERRORS`), adds `X-Request-ID` and logs every failed request
 - `app/api/router.py` - includes every route module
 - `app/api/routes/` - one file per feature: `upload.py`, `read.py`, `update.py`, `delete.py`, `health.py`
 - `app/providers/base.py` - `DocumentStorage`, the interface routes depend on
