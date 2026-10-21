@@ -14,6 +14,7 @@ redis==8.1.0
 pytest==9.1.1
 httpx2==2.13.1
 fakeredis==2.40.0
+lupa==2.8
 
 # Lint and type check
 ruff==0.17.0
