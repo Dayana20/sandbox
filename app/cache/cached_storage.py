@@ -39,12 +39,12 @@ class CachedDocumentStorage:
         store the answer for ttl_seconds. Only successful metadata is cached.
         Errors and file bytes are never cached.
 
-        upload, move and delete go to the wrapped storage first, then the
+        upload, replace, move and delete go to the wrapped storage first, then the
         cached entries for the paths they touched are removed. That also
         happens when the provider call raises something that leaves the outcome
         unknown (ProviderError or an unexpected exception), because the remote
         file may have changed before the error reached us. When delete or move
-        gets not_found, the entry for the missing source path is removed too,
+        (or replace) gets not_found, the entry for the missing path is removed too,
         because not_found proves the cached metadata is stale. It does not
         happen when the provider cleanly refuses the call (bad input,
         conflict, permission), because nothing changed. The original error is
@@ -73,6 +73,17 @@ class CachedDocumentStorage:
         return self._mutate(
             [path],
             lambda: self.storage.upload(path, content),
+        )
+
+    def replace(
+        self,
+        path: str,
+        content: bytes,
+    ) -> FileResource:
+        return self._mutate(
+            [path],
+            lambda: self.storage.replace(path, content),
+            not_found_paths=[path],
         )
 
     def get_metadata(

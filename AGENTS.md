@@ -10,7 +10,7 @@ A FastAPI service for storing documents. Callers upload, read, move and delete f
 
 - `app/main.py` - creates the FastAPI app, maps our errors to JSON responses (`ERRORS`), adds `X-Request-ID` and logs every failed request
 - `app/api/router.py` - includes every route module
-- `app/api/routes/` - one file per feature: `upload.py`, `read.py`, `update.py`, `delete.py`, `health.py`
+- `app/api/routes/` - one file per feature: `upload.py`, `replace.py`, `read.py`, `update.py`, `delete.py`, `health.py`
 - `app/providers/base.py` - `DocumentStorage`, the interface routes depend on
 - `app/providers/dropbox/` - the Dropbox implementation:
   - `client.py` creates the Dropbox SDK client from `.env`, preferring the refresh token over a short-lived access token

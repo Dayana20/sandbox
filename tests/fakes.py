@@ -75,6 +75,30 @@ class FakeDocumentStorage:
 
         return resource
 
+    def replace(
+        self,
+        path: str,
+        content: bytes,
+    ) -> FileResource:
+
+        if path in self.folders:
+            raise InvalidOperationError(f"Only files can be replaced: {path}")
+
+        if path not in self.files:
+            raise FileNotFoundError(
+                f"File not found: {path}"
+            )
+
+        resource = self.files[path][0]
+        updated = resource.model_copy(update={"size": len(content)})
+
+        self.files[path] = (
+            updated,
+            content,
+        )
+
+        return updated
+
     def get_metadata(
         self,
         path: str,
