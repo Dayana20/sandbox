@@ -175,6 +175,29 @@ def test_failed_upload_keeps_the_cache(cached, redis_client):
     assert redis_client.get(metadata_key(PATH)) is not None
 
 
+def test_replace_invalidates_the_path(cached, provider, redis_client):
+    cached.get_metadata(PATH)
+
+    cached.replace(PATH, b"a longer replacement")
+    assert redis_client.get(metadata_key(PATH)) is None
+
+    # Next read goes to the provider and sees the new size, not the cached one.
+    assert cached.get_metadata(PATH).size == 20
+    assert provider.metadata_calls == 2
+
+
+def test_replace_not_found_invalidates_stale_entry_and_reraises(redis_client):
+    error = FileNotFoundError("File not found: /docs/report.pdf")
+    cached = CachedDocumentStorage(FailingMutationStorage(error), redis_client, TTL)
+    seed_cache(cached, redis_client)
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        cached.replace(PATH, b"x")
+
+    assert exc_info.value is error
+    assert redis_client.get(metadata_key(PATH)) is None
+
+
 def test_move_invalidates_old_and_new_paths(cached, provider, redis_client):
     new_path = "/archive/report.pdf"
     cached.get_metadata(PATH)
@@ -294,6 +317,9 @@ class FailingMutationStorage(CountingStorage):
     def upload(self, path, content):
         raise self.error
 
+    def replace(self, path, content):
+        raise self.error
+
     def move(self, path, new_path):
         raise self.error
 
@@ -361,12 +387,13 @@ def test_move_failure_invalidates_both_paths_and_reraises(error, redis_client):
 
 
 @pytest.mark.parametrize("error", CLEAN_REFUSALS)
-@pytest.mark.parametrize("operation", ["upload", "delete", "move"])
+@pytest.mark.parametrize("operation", ["upload", "replace", "delete", "move"])
 def test_clean_refusal_leaves_the_cache_alone(operation, error, redis_client):
     cached = CachedDocumentStorage(FailingMutationStorage(error), redis_client, TTL)
     seed_cache(cached, redis_client)
     arguments = {
         "upload": (PATH, b"x"),
+        "replace": (PATH, b"x"),
         "delete": (PATH,),
         "move": (PATH, "/archive/report.pdf"),
     }[operation]

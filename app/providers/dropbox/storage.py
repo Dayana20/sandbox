@@ -2,7 +2,7 @@ import dropbox
 from dropbox.exceptions import ApiError, DropboxException
 from dropbox.files import FileMetadata, WriteMode
 
-from app.errors import InvalidRequestError, ProviderError
+from app.errors import FileConflictError, InvalidRequestError, ProviderError
 from app.models.file import FileResource
 from app.providers.dropbox.error_mapping import (
     logs_dropbox_errors,
@@ -52,6 +52,71 @@ class DropboxStorage:
             if exc.error.is_path():
                 raise translate_write_error(exc.error.get_path().reason, path) from exc
             raise ProviderError(f"Dropbox could not upload: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        return self.to_file_resource(metadata)
+
+    @logs_dropbox_errors
+    def replace(
+        self,
+        path: str,
+        content: bytes,
+    ) -> FileResource:
+        """
+            Replace the contents of an existing file in cloud storage.
+
+            Args:
+                path (str): The file to replace, e.g. "/docs/report.pdf".
+                content (bytes): The new file contents.
+            Returns:
+                FileResource: Metadata of the replaced file. The id does not change.
+            Raises:
+                FileNotFoundError: If nothing exists at this path.
+                InvalidRequestError: If the path is a folder.
+                FileConflictError: If the file changed or was deleted during the replace.
+                PermissionDeniedError: If the token can't write this file.
+        """
+        # Read the current rev first. A missing file stops here, so replace
+        # never creates one.
+        try:
+            current = self.client.files_get_metadata(path)
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_lookup_error(exc.error.get_path(), path) from exc
+            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        if not isinstance(current, FileMetadata):
+            raise InvalidRequestError(f"Only files can be replaced: {path}")
+
+        # WriteMode.update(rev) only writes if the file is still at that rev.
+        # autorename=False makes a mismatch a conflict instead of a
+        # "conflicted copy", and strict_conflict=True makes it a conflict even
+        # if the file was deleted in between, instead of creating it again.
+        try:
+            metadata = self.client.files_upload(
+                content,
+                path,
+                mode=WriteMode.update(current.rev),
+                autorename=False,
+                mute=True,
+                strict_conflict=True,
+            )
+        except RequestException as exc:
+            raise ProviderError(f"Dropbox could not replace: {path}") from exc
+        except ApiError as exc:
+            if exc.error.is_path():
+                reason = exc.error.get_path().reason
+                if reason.is_conflict():
+                    raise FileConflictError(
+                        f"File changed while it was being replaced: {path}"
+                    ) from exc
+                raise translate_write_error(reason, path) from exc
+            raise ProviderError(f"Dropbox could not replace: {path}") from exc
         except DropboxException as exc:
             raise translate_dropbox_exception(exc) from exc
 
