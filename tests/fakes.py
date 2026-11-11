@@ -1,11 +1,12 @@
+
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
     InvalidOperationError,
 )
 from app.models.file import FileResource
-from cloud_storage_api import FileInfo, ConflictError
-from datetime import timezone
+from cloud_storage_api import ConflictError, FileInfo
+
 
 class FakeDocumentStorage:
 
@@ -25,11 +26,14 @@ class FakeDocumentStorage:
         """Create an explicit folder for controlled tests."""
         if path in self.files:
             raise FileConflictError(f"File already exists: {path}")
+
         self._ensure_parent_folders(f"{path}/placeholder")
+
         folder = self.folders.get(path)
         if folder is None:
             folder = self._folder_resource(path)
             self.folders[path] = folder
+
         return folder
 
     def _folder_resource(self, path: str) -> FileResource:
@@ -43,9 +47,13 @@ class FakeDocumentStorage:
 
     def _ensure_parent_folders(self, path: str) -> None:
         parts = path.strip("/").split("/")[:-1]
+
         for index in range(1, len(parts) + 1):
             folder_path = "/" + "/".join(parts[:index])
-            self.folders.setdefault(folder_path, self._folder_resource(folder_path))
+            self.folders.setdefault(
+                folder_path,
+                self._folder_resource(folder_path),
+            )
 
     def upload(
         self,
@@ -83,7 +91,9 @@ class FakeDocumentStorage:
     ) -> FileResource:
 
         if path in self.folders:
-            raise InvalidOperationError(f"Only files can be replaced: {path}")
+            raise InvalidOperationError(
+                f"Only files can be replaced: {path}"
+            )
 
         if path not in self.files:
             raise FileNotFoundError(
@@ -91,7 +101,10 @@ class FakeDocumentStorage:
             )
 
         resource = self.files[path][0]
-        updated = resource.model_copy(update={"size": len(content)})
+
+        updated = resource.model_copy(
+            update={"size": len(content)}
+        )
 
         self.files[path] = (
             updated,
@@ -107,15 +120,25 @@ class FakeDocumentStorage:
 
         if path in self.files:
             return self.files[path][0]
+
         if path in self.folders:
             return self.folders[path]
-        raise FileNotFoundError(f"File not found: {path}")
+
+        raise FileNotFoundError(
+            f"File not found: {path}"
+        )
 
     def list_files(self, path: str) -> list[FileResource]:
+
         if path in self.files:
-            raise InvalidOperationError(f"Path is not a folder: {path}")
+            raise InvalidOperationError(
+                f"Path is not a folder: {path}"
+            )
+
         if path not in self.folders:
-            raise FileNotFoundError(f"Folder not found: {path}")
+            raise FileNotFoundError(
+                f"Folder not found: {path}"
+            )
 
         def parent(resource_path: str) -> str:
             return resource_path.rsplit("/", maxsplit=1)[0] or "/"
@@ -125,12 +148,17 @@ class FakeDocumentStorage:
             for resource, _ in self.files.values()
             if parent(resource.path) == path
         ]
+
         entries.extend(
             resource.model_copy(update={"type": "folder"})
             for folder_path, resource in self.folders.items()
             if folder_path != "/" and parent(folder_path) == path
         )
-        return sorted(entries, key=lambda resource: resource.path)
+
+        return sorted(
+            entries,
+            key=lambda resource: resource.path,
+        )
 
     def download(
         self,
@@ -159,12 +187,14 @@ class FakeDocumentStorage:
             raise ConflictError(
                 f"File already exists: {to_path}"
             )
+
         if to_path in self.folders:
             raise ConflictError(
                 f"Path already exists: {to_path}"
             )
 
         resource, content = self.files.pop(from_path)
+
         self._ensure_parent_folders(to_path)
 
         updated_resource = FileResource(
@@ -182,16 +212,12 @@ class FakeDocumentStorage:
             content,
         )
 
-        modified_at = updated_resource.modified_at
-        if modified_at is not None:
-            modified_at = modified_at.astimezone(timezone.utc).isoformat()
-
         return FileInfo(
             id=updated_resource.id,
             name=updated_resource.name,
             path=updated_resource.path,
             size=updated_resource.size,
-            modified_at=modified_at,
+            modified_at=updated_resource.modified_at,
             etag=None,
             type=None,
         )
@@ -204,10 +230,17 @@ class FakeDocumentStorage:
         if path in self.folders:
             # A folder is deleted with everything under it, like Dropbox does.
             prefix = f"{path}/"
-            for file_path in [p for p in self.files if p.startswith(prefix)]:
+
+            for file_path in [
+                p for p in self.files if p.startswith(prefix)
+            ]:
                 del self.files[file_path]
-            for folder_path in [p for p in self.folders if p.startswith(prefix)]:
+
+            for folder_path in [
+                p for p in self.folders if p.startswith(prefix)
+            ]:
                 del self.folders[folder_path]
+
             del self.folders[path]
             return
 
