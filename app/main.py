@@ -19,6 +19,9 @@ from app.errors import (
     StorageNotConfiguredError,
 )
 
+from cloud_storage_api import ConflictError
+
+
 
 logger = logging.getLogger(__name__)
 request_logger = logging.getLogger("app.requests")
@@ -222,6 +225,12 @@ def create_app() -> FastAPI:
             provider=False,
         )
 
+    # specific for Move which can raise a ConflictError from the shared contract
+    @app.exception_handler(ConflictError)
+    async def handle_contract_conflict(request: Request, exc: ConflictError):
+        return error_response(
+            request, 409, "conflict", str(exc), provider=True
+        )
     return app
 
 

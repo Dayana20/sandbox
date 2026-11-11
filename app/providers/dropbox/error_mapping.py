@@ -13,6 +13,8 @@ from dropbox.exceptions import (
 )
 from dropbox.files import LookupError, WriteError
 
+from cloud_storage_api import ConflictError
+
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
