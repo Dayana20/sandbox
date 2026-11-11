@@ -128,8 +128,8 @@ First, the failure case. Upload `notes.txt`, then try to move it onto `report.tx
 **Run:**
 ```bash
 curl -s -X POST http://127.0.0.1:8000/files -F "file=@notes.txt" -F "path=/tutorial/notes.txt"
-curl -i -X PATCH "http://127.0.0.1:8000/files?path=/tutorial/notes.txt" \
-  -H "Content-Type: application/json" -d '{"new_path": "/tutorial/report.txt"}'
+curl -i -X PATCH "http://127.0.0.1:8000/files?from_path=/tutorial/notes.txt" \
+  -H "Content-Type: application/json" -d '{"to_path": "/tutorial/report.txt"}'
 ```
 
 **Expected:** `409 conflict`. Nothing moves and neither file changes.
@@ -148,8 +148,8 @@ Now rename `report.txt` to a free name:
 
 **Run:**
 ```bash
-curl -i -X PATCH "http://127.0.0.1:8000/files?path=/tutorial/report.txt" \
-  -H "Content-Type: application/json" -d '{"new_path": "/tutorial/final-report.txt"}'
+curl -i -X PATCH "http://127.0.0.1:8000/files?from_path=/tutorial/report.txt" \
+  -H "Content-Type: application/json" -d '{"to_path": "/tutorial/final-report.txt"}'
 ```
 
 **Expected:** `200 OK` with the new name and path, and the **same** `id` and `size`, because Dropbox moves the file rather than copying it.

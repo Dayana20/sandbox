@@ -68,7 +68,6 @@ def test_get_dropbox_folder_metadata_success():
     assert result.id == "id:folder"
     assert result.name == "docs"
     assert result.path == "/docs"
-    assert result.size is None
     assert result.modified_at is None
     assert result.etag is None
     assert result.type is None

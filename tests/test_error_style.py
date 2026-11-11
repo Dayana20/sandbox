@@ -46,8 +46,8 @@ CASES = {
         400,
         "invalid_request",
     ),
-    "new_path is a number": (
-        lambda: client.patch("/files", params={"path": "/a.txt"}, json={"new_path": 5}),
+    "to_path is a number": (
+        lambda: client.patch("/files", params={"from_path": "/a.txt"}, json={"to_path": 5}),
         400,
         "invalid_request",
     ),
@@ -65,7 +65,7 @@ CASES = {
     "metadata missing file": (lambda: client.get("/files/metadata", params={"path": "/no.txt"}), 404, "not_found"),
     "download missing file": (lambda: client.get("/files/download", params={"path": "/no.txt"}), 404, "not_found"),
     "move missing file": (
-        lambda: client.patch("/files", params={"path": "/no.txt"}, json={"new_path": "/b.txt"}),
+        lambda: client.patch("/files", params={"from_path": "/no.txt"}, json={"to_path": "/b.txt"}),
         404,
         "not_found",
     ),

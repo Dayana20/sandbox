@@ -18,7 +18,7 @@ Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_d
 | `get_metadata(path)` | Look up a file or folder | resource path | `FileResource` | No | Folder-only fields are nullable |
 | `list_files(path)` | List a folder's direct children | folder path | `list[FileResource]` | No | Every provider page is included and results are sorted by path |
 | `download(path)` | Get a file's contents | file path | `bytes` | No | Bytes are exactly what was uploaded |
-| `move(path, new_path)` | Rename or move a file | old path, new path | `FileResource` | Yes | The `id` stays the same; nothing at `new_path` is overwritten |
+| `move(from_path, to_path)` | Rename or move a file | old path, new path | `FileInfo` | Yes | The `id` stays the same; nothing at `to_path` is overwritten |
 | `delete(path)` | Delete a file or a folder | file or folder path | `None` | Yes | A folder is deleted with everything in it |
 
 Callers may send paths with or without a leading slash. The service validates
@@ -45,7 +45,7 @@ Every failed request returns the same JSON shape, whichever endpoint it came fro
 | --- | --- | --- | --- | --- |
 | 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, or Dropbox refuses the name | No. Fix the request first |
 | 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
-| 404 | `not_found` | `FileNotFoundError` | Nothing exists at `path`, including a repeated delete or move | No |
+| 404 | `not_found` | `FileNotFoundError` | Nothing exists at the requested path (for Move, `from_path`), including a repeated delete or move | No |
 | 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
 | 413 | `file_too_large` | `FileTooLargeError` | An upload or replace is larger than 150 MiB (157,286,400 bytes), the most Dropbox's `files_upload` accepts in one call | No. Send a smaller file |
 | 422 | `invalid_operation` | `InvalidOperationError` | A valid resource cannot be used for the requested operation, such as listing a file as a folder | No. Use a folder path |
@@ -128,7 +128,7 @@ def read_metadata(
 | Replace contents | `storage.replace(path, content)` |
 | Read metadata | `storage.get_metadata(path)` |
 | Read bytes | `storage.download(path)` |
-| Update path | `storage.move(path, new_path)` |
+| Update path | `storage.move(from_path, to_path)` |
 | Delete | `storage.delete(path)` |
 
 Fill in the matching method on `DropboxStorage`. Use `self.client` for the Dropbox call, `to_file_resource()` for metadata, and **raise** the translator result so the HTTP handlers run:
@@ -159,7 +159,7 @@ Put `@logs_dropbox_errors` on every new `DropboxStorage` method so its Dropbox f
 
 ## Paths
 
-Every route that takes a file path checks it with `validate_path` from `app/validation.py` before calling storage. A bad path returns `400 invalid_request` and Dropbox is never called. The same rules apply to upload, metadata, download, move (both `path` and `new_path`) and delete:
+Every route that takes a file path checks it with `validate_path` from `app/validation.py` before calling storage. A bad path returns `400 invalid_request` and Dropbox is never called. The same rules apply to upload, metadata, download, move (both `from_path` and `to_path`) and delete:
 
 | Rule | Behavior/example |
 | --- | --- |
@@ -520,14 +520,14 @@ How it works: the route in `app/api/routes/download.py` checks `path` with `vali
 
 ## Update (rename or move) a file
 
-`PATCH /files?path=...` with a JSON body returns `200 OK` and the file's new metadata.
+`PATCH /files?from_path=...` with a JSON body returns `200 OK` and the file's new metadata.
 
-Renames or moves the file at `path` to `new_path`. The file keeps the same `id` and content. Missing parent folders in `new_path` are created by Dropbox. Folders are refused with `400`, because Dropbox would move everything inside them. An existing file at `new_path` is never overwritten: you get `409` and nothing changes.
+Renames or moves the file at `from_path` to `to_path`. The file keeps the same `id` and content. Missing parent folders in `to_path` are created by Dropbox. Folders are refused with `400`, because Dropbox would move everything inside them. An existing file at `to_path` is never overwritten: you get `409` and nothing changes.
 
 | Field | Where | Required | Description |
 | --- | --- | --- | --- |
-| `path` | query | yes | The file to move, e.g. `/docs/report.pdf` |
-| `new_path` | JSON body | yes | Where it should end up, e.g. `/archive/report.pdf`. Must differ from `path` by more than letter case. Dropbox does not support case-only renames like `/a.pdf` -> `/A.pdf`. |
+| `from_path` | query | yes | The file to move, e.g. `/docs/report.pdf` |
+| `to_path` | JSON body | yes | Where it should end up, e.g. `/archive/report.pdf`. Must differ from `from_path` by more than letter case. Dropbox does not support case-only renames like `/a.pdf` -> `/A.pdf`. |
 
 Example response:
 
@@ -547,10 +547,10 @@ Errors:
 
 | Status | Code | When | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request` | Missing or bad `path`/`new_path`, `new_path` equals `path` ignoring case, `path` is a folder, or Dropbox refuses the name | No, fix the input |
-| 403 | `permission_denied` | Token can't move this file or write to `new_path` | No |
-| 404 | `not_found` | Nothing exists at `path` | No |
-| 409 | `conflict` | Something already exists at `new_path` | No, pick another `new_path` |
+| 400 | `invalid_request` | Missing or bad `from_path`/`to_path`, `to_path` equals `from_path` ignoring case, `from_path` is a folder, or Dropbox refuses the name | No, fix the input |
+| 403 | `permission_denied` | Token can't move this file or write to `to_path` | No |
+| 404 | `not_found` | Nothing exists at `from_path` | No |
+| 409 | `conflict` | Something already exists at `to_path` | No, pick another `to_path` |
 | 502 | `provider_error` | Dropbox failed or is rate limiting | Yes, but first check whether the file already moved (a repeat returns `404` if it did) |
 
 Repeating a successful move returns `404`, because the file is no longer at `path`.
@@ -558,11 +558,11 @@ Repeating a successful move returns `404`, because the file is no longer at `pat
 Try it:
 
 ```bash
-curl -i -X PATCH "http://127.0.0.1:8000/files?path=/docs/report.pdf" \
-  -H "Content-Type: application/json" -d '{"new_path": "/archive/report.pdf"}'
+curl -i -X PATCH "http://127.0.0.1:8000/files?from_path=/docs/report.pdf" \
+  -H "Content-Type: application/json" -d '{"to_path": "/archive/report.pdf"}'
 ```
 
-How it works: the route checks both paths with `validate_path` and rejects a `new_path` that matches `path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `path`. Destination errors (`to`) are translated against `new_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
+How it works: the route checks both paths with `validate_path` and rejects a `to_path` that matches `from_path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `from_path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `from_path`. Destination errors (`to`) are translated against `to_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
 
 ## Delete a file or folder
 

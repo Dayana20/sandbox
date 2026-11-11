@@ -1,6 +1,7 @@
 from typing import Protocol
 
 from app.models.file import FileResource
+from cloud_storage_api import FileInfo
 
 
 class DocumentStorage(Protocol):
@@ -69,13 +70,13 @@ class DocumentStorage(Protocol):
 
     def move(
         self,
-        path: str,
-        new_path: str,
-    ) -> FileResource:
+        from_path: str,
+        to_path: str,
+    ) -> FileInfo:
         """
-            Rename or move the file at path to new_path. Changes state.
+            Rename or move the file at from_path to to_path. Changes state.
 
-            The file keeps its id. Never overwrites a file at new_path.
+            The file keeps its id. Never overwrites a file at to_path.
             Returns the file's metadata at its new path.
         """
         ...
