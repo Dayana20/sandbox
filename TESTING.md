@@ -95,6 +95,47 @@ Failed: storage.download was called with ('/docs/../report.pdf',)
 
 With the shared validator it passes. Likewise, 7 tests in `test_error_style.py` fail against the `main.py` from before the 404/405 handler, because FastAPI returned `{"detail": "Not Found"}`.
 
+## Shared conformance suite
+
+The vertical's shared conformance suite (55 HTTP tests, [ospsd26-cloud-storage PR #6](https://github.com/Dayana20/ospsd26-cloud-storage/pull/6) at `b77617c`) checks that Teams 1, 3 and 6 behave the same. It only uses HTTP, so it runs against our app with real Dropbox. Each test works in its own `/conformance-<random>` folder and deletes it at the end.
+
+**In CI:** the `conformance` job in `.github/workflows/ci.yml` runs on every push to `hw2-milestone3`. It starts the app with the Dropbox credentials from the repository secrets (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`), then runs the suite in two steps:
+
+- **Agreed rules** (`-m "not proposed"`): must pass, or the job fails.
+- **Proposed rules** (`-m "proposed"`): rules not yet agreed between the teams. Reported, but they don't fail the job.
+
+The run's summary page shows the counts, and the JUnit files and service log are uploaded as the `conformance-results` artifact.
+
+**Locally:** start the app in one terminal and the suite in another:
+
+```bash
+# terminal 1, in this repo
+uvicorn app.main:app --port 8011 --no-access-log
+
+# terminal 2, in a clone of ospsd26-cloud-storage with PR #6 checked out
+CONFORMANCE_BASE_URL=http://127.0.0.1:8011 python -m pytest conformance/tests -o addopts="--import-mode=importlib" -q
+```
+
+**Recorded run, Nov 11, 2026 (Shini), `hw2-milestone3` at `4530d43`, real Dropbox: 51 of 55 pass.**
+
+| Rules | Passed | Failed |
+| --- | --- | --- |
+| Agreed | 25 | 0 |
+| Proposed | 26 | 4 |
+
+Earlier the same day, at `27460b6`, it was 45/55: `/health/provider` was missing and move used `from_path`/`to_path` instead of the shared `path`/`new_path`. #42 fixed both.
+
+The 4 failures are all proposed rules:
+
+| Test | Expected | We return |
+| --- | --- | --- |
+| `test_errors.py::test_unknown_route` | `404 route_not_found` | `404 not_found` |
+| `test_move.py::test_move_same_path[same]` | `422 invalid_operation` | `400 invalid_request` |
+| `test_move.py::test_move_same_path[case-only]` | `422 invalid_operation` | `400 invalid_request` |
+| `test_move.py::test_move_folder` | `422 invalid_operation` | `400 invalid_request` |
+
+The suite does not cover the upload size limit, provider errors (403, 502, 503), empty folders, lists longer than one page, or letter case; our own tests above cover those.
+
 ## What the fake assumes
 
 `FakeDocumentStorage` (`tests/fakes.py`) only needs enough behaviour for the route tests. It differs from Dropbox in ways that matter:

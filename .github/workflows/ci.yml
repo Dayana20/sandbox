@@ -45,3 +45,110 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t document-storage-api:ci .
+
+  conformance:
+    name: Shared conformance suite (real Dropbox)
+    runs-on: ubuntu-latest
+    needs: test
+    # Secrets are not available to pull requests from forks, so the live
+    # suite runs on pushes to hw2-milestone3 and on PRs from this repo.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+      DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+      DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+      CONFORMANCE_BASE_URL: http://127.0.0.1:8000
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The shared suite from ospsd26-cloud-storage PR #6, pinned to one commit.
+      - name: Checkout shared conformance suite
+        uses: actions/checkout@v7
+        with:
+          repository: Dayana20/ospsd26-cloud-storage
+          ref: b77617c218d345c8cde28dbf08cf4d1a5cbaef38
+          path: shared
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Check Dropbox secrets are set
+        run: |
+          for name in DROPBOX_APP_KEY DROPBOX_APP_SECRET DROPBOX_REFRESH_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not set"
+              exit 1
+            fi
+          done
+
+      - name: Start the service
+        run: |
+          python -m uvicorn app.main:app --port 8000 --no-access-log > service.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            curl --fail --silent "$CONFORMANCE_BASE_URL/health" > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::Service did not start"
+          cat service.log
+          exit 1
+
+      - name: Provider health
+        run: curl --fail --silent --show-error "$CONFORMANCE_BASE_URL/health/provider"
+
+      # Agreed rules: these must pass.
+      - name: Conformance (agreed rules)
+        working-directory: shared
+        run: |
+          python -m pytest conformance/tests -m "not proposed" \
+            -o addopts="--import-mode=importlib" -p no:cacheprovider \
+            -v -rf --junitxml=../conformance-agreed.xml
+
+      # Rules still marked "proposed" in the suite. Reported, not enforced.
+      - name: Conformance (proposed rules, informational)
+        if: always()
+        continue-on-error: true
+        working-directory: shared
+        run: |
+          python -m pytest conformance/tests -m "proposed" \
+            -o addopts="--import-mode=importlib" -p no:cacheprovider \
+            -v -rf --junitxml=../conformance-proposed.xml
+
+      - name: Summary
+        if: always()
+        run: |
+          python - >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import xml.etree.ElementTree as ET
+          print("## Shared conformance suite")
+          print(f"Commit `${{ github.sha }}`, suite `b77617c`, real Dropbox\n")
+          print("| Rules | Passed | Failed | Total |")
+          print("| --- | --- | --- | --- |")
+          for label, path in [("Agreed", "conformance-agreed.xml"), ("Proposed", "conformance-proposed.xml")]:
+              try:
+                  suite = ET.parse(path).getroot().find("testsuite")
+              except (OSError, ET.ParseError):
+                  print(f"| {label} | - | - | not run |")
+                  continue
+              total = int(suite.get("tests"))
+              failed = int(suite.get("failures")) + int(suite.get("errors"))
+              skipped = int(suite.get("skipped"))
+              print(f"| {label} | {total - failed - skipped} | {failed} | {total} |")
+          PY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-results
+          path: |
+            conformance-*.xml
+            service.log
