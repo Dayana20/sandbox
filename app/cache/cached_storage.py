@@ -131,6 +131,12 @@ class CachedDocumentStorage:
             not_found_paths=[path],
         )
 
+    def check_health(
+        self,
+    ) -> None:
+        # Health check is read-only, so it does not change the cache.
+        self.storage.check_health()
+
     def _mutate(
         self,
         paths: list[str],

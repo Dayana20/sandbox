@@ -300,3 +300,21 @@ class DropboxStorage:
             etag=None,
             type=resource_type,
         )
+    @logs_dropbox_errors
+    def check_health(
+        self,
+    ) -> None:
+        """
+            Raise an exception if the provider is unreachable or misconfigured.
+
+            Args:
+                None
+            Returns:
+                None
+        """
+        try:
+            self.client.users_get_current_account()
+        except Exception as exc:
+            raise ProviderUnavailableError(
+                "Dropbox could not be reached"
+            ) from exc
