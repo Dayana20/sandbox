@@ -1,0 +1,122 @@
+
+name: Deploy Document Storage API to OCI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: document-storage-oci-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Oracle Cloud
+    if: github.ref == 'refs/heads/hw2-milestone3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Deploy through SSH
+        shell: bash
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          OCI_KNOWN_HOSTS: ${{ secrets.OCI_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          : "${OCI_HOST:?Missing OCI_HOST secret}"
+          : "${OCI_USER:?Missing OCI_USER secret}"
+          : "${OCI_SSH_PRIVATE_KEY:?Missing OCI_SSH_PRIVATE_KEY secret}"
+          : "${OCI_KNOWN_HOSTS:?Missing OCI_KNOWN_HOSTS secret}"
+
+          SSH_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SSH_DIR"' EXIT
+
+          chmod 700 "$SSH_DIR"
+          printf '%s\n' "$OCI_SSH_PRIVATE_KEY" > "$SSH_DIR/id_ed25519"
+          printf '%s\n' "$OCI_KNOWN_HOSTS" > "$SSH_DIR/known_hosts"
+
+          chmod 600 "$SSH_DIR/id_ed25519"
+          chmod 600 "$SSH_DIR/known_hosts"
+
+          ssh \
+            -i "$SSH_DIR/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            "$OCI_USER@$OCI_HOST" \
+            "DEPLOY_SHA=$GITHUB_SHA bash -se" <<'REMOTE'
+
+          set -euo pipefail
+
+          echo "Starting Document Storage API deployment"
+
+          cd "$HOME/sandbox"
+
+          # Never overwrite manual changes to tracked files.
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "ERROR: Working tree has uncommitted tracked changes."
+            exit 1
+          fi
+
+          # Keep credentials on the VM.
+          if [ ! -f .env ]; then
+            echo "ERROR: Deployment .env is missing."
+            exit 1
+          fi
+
+          # Fetch the approved deployment branch.
+          git fetch origin hw2-milestone3
+
+          REMOTE_SHA="$(git rev-parse origin/hw2-milestone3)"
+
+          # Prevent deploying a different commit than the
+          # one selected in GitHub Actions.
+          if [ "$REMOTE_SHA" != "$DEPLOY_SHA" ]; then
+            echo "ERROR: Branch changed since workflow started."
+            exit 1
+          fi
+
+          git switch hw2-milestone3
+          git merge --ff-only "$DEPLOY_SHA"
+
+          echo "Deploying commit: $DEPLOY_SHA"
+
+          # Validate the committed Compose configuration.
+          sudo -n docker compose config --quiet
+
+          # Build before replacing the running container.
+          sudo -n docker compose build api
+
+          # Restart only the API service.
+          sudo -n docker compose up -d --no-deps api
+
+          # Wait for FastAPI to become healthy.
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              --max-time 3 \
+              http://127.0.0.1:8000/health \
+              > /dev/null 2>&1; then
+
+              echo "Deployment successful."
+              echo "FastAPI health check passed."
+              exit 0
+            fi
+
+            echo "Waiting for API ($attempt/30)"
+            sleep 3
+          done
+
+          echo "ERROR: API did not become healthy."
+          sudo -n docker compose ps
+          exit 1
+
+          REMOTE
