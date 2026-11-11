@@ -2,6 +2,7 @@
 # Transitive dependencies are not pinned.
 
 # Application
+cloud-storage-api @ git+https://github.com/Dayana20/ospsd26-cloud-storage.git@0.2.0#subdirectory=src/cloud_storage_api
 fastapi==0.143.0
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
