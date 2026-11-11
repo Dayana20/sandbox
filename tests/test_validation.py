@@ -10,12 +10,17 @@ from app.validation import validate_path
 client = TestClient(app)
 
 BAD_PATHS = [
-    "docs/report.pdf",       # no leading slash
     "/docs/",                # ends with a slash, so no file name
+    "docs/report.pdf/",      # trailing separator without a leading slash
     "/",                     # root, no file name
     "/docs//report.pdf",     # empty segment
+    "docs//report.pdf",      # empty segment after canonicalization
     "/docs/./report.pdf",    # "." segment
+    ".",                     # a single "." segment
+    "docs/./report.pdf",     # "." segment after canonicalization
     "/docs/../report.pdf",   # ".." segment
+    "..",                    # a single ".." segment
+    "docs/../report.pdf",    # ".." segment after canonicalization
     "/..",
     "/docs/report\n.pdf",    # newline
     "/docs/report\x00.pdf",  # null byte
@@ -25,11 +30,25 @@ BAD_PATHS = [
 
 
 @pytest.mark.parametrize(
-    "path",
-    ["/report.pdf", "/docs/report.pdf", "/a/b/c/notes.v2.txt", "/docs/my report.pdf"],
+    ("path", "expected"),
+    [
+        ("/report.pdf", "/report.pdf"),
+        ("report.pdf", "/report.pdf"),
+        ("/docs/report.pdf", "/docs/report.pdf"),
+        ("docs/report.pdf", "/docs/report.pdf"),
+        ("a/b/c/notes.v2.txt", "/a/b/c/notes.v2.txt"),
+        ("docs/my report.pdf", "/docs/my report.pdf"),
+    ],
 )
-def test_valid_path_is_returned_unchanged(path):
-    assert validate_path(path) == path
+def test_valid_path_is_returned_in_canonical_form(path, expected):
+    assert validate_path(path) == expected
+
+
+def test_root_is_valid_only_when_explicitly_allowed():
+    assert validate_path("/", allow_root=True) == "/"
+
+    with pytest.raises(InvalidRequestError):
+        validate_path("/")
 
 
 @pytest.mark.parametrize("path", [None, ""])

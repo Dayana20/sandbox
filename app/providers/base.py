@@ -31,8 +31,16 @@ class DocumentStorage(Protocol):
         path: str,
     ) -> FileResource:
         """
-            Return metadata of the file at path. Read only.
+            Return provider-neutral metadata of the file or folder at path.
+            Read only.
         """
+        ...
+
+    def list_files(
+        self,
+        path: str,
+    ) -> list[FileResource]:
+        """Return every direct child of a folder, sorted by canonical path."""
         ...
 
     def download(

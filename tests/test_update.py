@@ -104,7 +104,7 @@ def test_move_onto_existing_file_is_refused(storage):
     [
         (None, "/renamed.pdf"),
         ("/report.pdf", None),
-        ("report.pdf", "/renamed.pdf"),
+        ("report.pdf", "report.pdf"),
         ("/report.pdf", "/folder/"),
         ("/report.pdf", "/../renamed.pdf"),
         ("/report.pdf", "/report.pdf"),
@@ -118,6 +118,16 @@ def test_move_invalid_input_never_touches_storage(storage, path, new_path):
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
     assert list(storage.files) == ["/report.pdf"]
+
+
+def test_move_without_leading_slashes_uses_canonical_paths(storage):
+    storage.upload("/docs/report.pdf", b"hello")
+
+    response = move_file("docs/report.pdf", "archive/final.pdf")
+
+    assert response.status_code == 200
+    assert response.json()["path"] == "/archive/final.pdf"
+    assert storage.download("/archive/final.pdf") == b"hello"
 
 
 @pytest.mark.parametrize(

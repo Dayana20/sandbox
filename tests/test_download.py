@@ -32,6 +32,16 @@ def test_download_file(storage):
     assert response.headers["Content-Type"] == "application/octet-stream"
 
 
+def test_download_without_leading_slash_uses_canonical_path(storage):
+    storage.upload("/docs/test.pdf", b"hello world")
+
+    response = get_file("docs/test.pdf")
+
+    assert response.status_code == 200
+    assert response.content == b"hello world"
+    assert 'filename="test.pdf"' in response.headers["Content-Disposition"]
+
+
 def test_download_file_not_found(storage):
     response = get_file("/docs/missing_file.pdf")
 
