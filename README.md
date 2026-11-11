@@ -43,10 +43,11 @@ Every failed request returns the same JSON shape, whichever endpoint it came fro
 
 | Status | Code | Raised as | When it happens | Retry? |
 | --- | --- | --- | --- | --- |
-| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
+| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, or Dropbox refuses the name | No. Fix the request first |
 | 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
 | 404 | `not_found` | `FileNotFoundError` | Nothing exists at `path`, including a repeated delete or move | No |
 | 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
+| 413 | `file_too_large` | `FileTooLargeError` | An upload or replace is larger than 150 MiB (157,286,400 bytes), the most Dropbox's `files_upload` accepts in one call | No. Send a smaller file |
 | 422 | `invalid_operation` | `InvalidOperationError` | A valid resource cannot be used for the requested operation, such as listing a file as a folder | No. Use a folder path |
 | 409 | `idempotency_conflict` | `IdempotencyConflictError` | An upload's `Idempotency-Key` was already used for a different request (different `path` or bytes) | No. Use a new key for a different upload |
 | 409 | `idempotency_in_progress` | `IdempotencyInProgressError` | The same request with this key is still running, or was cut off. It was not repeated | Yes, later, with the same key |
@@ -223,9 +224,10 @@ Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, file over 150 MB, or an empty or over-long `Idempotency-Key` |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, or an empty or over-long `Idempotency-Key` |
 | 403 | `permission_denied` | Token can't write to Dropbox |
 | 409 | `conflict` | A file already exists at `path` |
+| 413 | `file_too_large` | The file is over 150 MiB |
 | 409 | `idempotency_conflict`, `idempotency_in_progress`, `idempotency_outcome_unknown` | Only with an `Idempotency-Key`. See [Upload idempotency](#upload-idempotency) |
 | 502 | `provider_error` | Dropbox failed |
 | 503 | `idempotency_unavailable` | Only with an `Idempotency-Key`: Redis can't be used, so nothing was uploaded |
@@ -253,7 +255,8 @@ Errors:
 
 | Status | Code | When | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB | No, fix the input |
+| 400 | `invalid_request` | Missing `file` or `path`, or bad path | No, fix the input |
+| 413 | `file_too_large` | The file is over 150 MiB | No, send a smaller file |
 | 403 | `permission_denied` | Token can't write this file | No |
 | 404 | `not_found` | Nothing exists at `path` | No, create it with `POST /files` |
 | 409 | `conflict` | The file changed or was deleted during the replace | Yes, after reading the file again to decide whether your change still applies |

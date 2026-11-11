@@ -130,7 +130,7 @@ Observed Nov 4, 2026 against real Dropbox through the app (path shortened). Proc
 ### Information loss and limits
 
 - **Letter case:** Dropbox treats paths differing only in case as one file. Case-only rename returns 400 today.
-- **Upload limit:** README says 150 MB, the memo says 150 MiB. VERIFY against `app/api/routes/` and the Dropbox docs, then state the exact byte limit. The status above the limit is 400 today; 413 is open (open question 9).
+- **Upload limit:** 150 MiB (157,286,400 bytes; `MAX_UPLOAD_BYTES` in `app/api/routes/upload.py`), Dropbox's single-call `files_upload` limit. Create and replace above it return `413 file_too_large`, as the shared contract's `FileTooLargeError` defines.
 - `id` is a Dropbox id and is opaque to callers.
 
 ---
@@ -172,7 +172,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | No permission | `PermissionDeniedError` | 403 | `permission_denied` |
 | Dropbox failure or rate limit | `ProviderError` | 502 | `provider_error` (rename to `provider_failure`) |
 | Provider not configured | `StorageNotConfiguredError` | 503 | `provider_not_configured` |
-| File too large | `InvalidRequestError` today | 400 today, 413 open | `invalid_input` |
+| File too large | `FileTooLargeError` | 413 | `file_too_large` |
 
 ### Uncertain writes and retries
 
@@ -297,3 +297,4 @@ Upload a file, read its metadata, download it and compare bytes, list its folder
 - **Replace on a folder returns `422 invalid_operation`, not `400`.** The shared contract (`cloud_storage_api` 0.2.0) defines `InvalidOperationError` for valid input the contract forbids, and a folder path is valid input. Shini's replace (`PUT /files`) was ported onto `hw2-milestone3` with this change.
 - **Folder delete is one Dropbox call.** We had planned to check the path first. Dropbox's `files_delete_v2` already removes a folder with everything inside it, so the extra `files_get_metadata` call was dropped: a file delete now costs 1 Dropbox call instead of 2.
 - **The metadata cache drops entries inside a deleted folder.** Before, a delete only removed the entry for the path itself, which was enough while folders couldn't be deleted. Now every cached entry below the folder is removed too, so a deleted folder's files don't keep answering `200` from Redis until their TTL runs out.
+- **Create and replace return `413 file_too_large` above 150 MiB, not `400`.** The shared contract added `FileTooLargeError` (413), so open question 9 is settled for Team 1. The limit stays 150 MiB because that is the most Dropbox's `files_upload` accepts in one call.

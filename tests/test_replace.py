@@ -78,8 +78,8 @@ def test_replace_too_large_is_rejected(storage, monkeypatch):
 
     response = replace_file("/report.pdf", b"x" * 11)
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "invalid_request"
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "file_too_large"
     assert storage.download("/report.pdf") == b"hello"
 
 

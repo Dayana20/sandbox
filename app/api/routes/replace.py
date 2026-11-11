@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from app.api.responses import error_responses
 from app.api.routes.upload import MAX_UPLOAD_BYTES
 from app.dependencies import get_document_storage
-from app.errors import InvalidRequestError
+from app.errors import FileTooLargeError, InvalidRequestError
 from app.models.file import FileResource
 from app.providers.base import DocumentStorage
 from app.validation import validate_path
@@ -15,7 +15,7 @@ router = APIRouter(
 )
 
 
-@router.put("", responses=error_responses(400, 403, 404, 409, 422, 502, 503))
+@router.put("", responses=error_responses(400, 403, 404, 409, 413, 422, 502, 503))
 def replace_file(
     file: UploadFile | None = File(None),
     path: str | None = Form(None),
@@ -33,12 +33,12 @@ def replace_file(
 
     path = validate_path(path)
 
-    # Same limit as upload: Dropbox files_upload accepts up to 150 MB
+    # Same limit as upload: Dropbox files_upload accepts up to 150 MiB
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
-        raise InvalidRequestError("File is larger than 150 MB")
+        raise FileTooLargeError("File is larger than 150 MiB")
 
     content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
-        raise InvalidRequestError("File is larger than 150 MB")
+        raise FileTooLargeError("File is larger than 150 MiB")
 
     return storage.replace(path, content)

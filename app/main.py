@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
+    FileTooLargeError,
     IdempotencyError,
     InvalidOperationError,
     InvalidRequestError,
@@ -33,6 +34,7 @@ ERRORS: dict[type[StorageError], tuple[int, str]] = {
     PermissionDeniedError: (403, "permission_denied"),
     FileNotFoundError: (404, "not_found"),
     FileConflictError: (409, "conflict"),
+    FileTooLargeError: (413, "file_too_large"),
     InvalidOperationError: (422, "invalid_operation"),
     ProviderError: (502, "provider_error"),
     ProviderUnavailableError: (503, "provider_unavailable"),
