@@ -92,6 +92,14 @@ class CachedDocumentStorage:
 
         return metadata
 
+    def list_files(
+        self,
+        path: str,
+    ) -> list[FileResource]:
+        # Directory listings are deliberately not cached. Caching them would
+        # require a separate invalidation model for every write operation.
+        return self.storage.list_files(path)
+
     def download(
         self,
         path: str,

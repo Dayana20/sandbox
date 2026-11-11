@@ -12,6 +12,7 @@ from app.models.file import FileResource, format_utc_timestamp
 from app.providers.dropbox.error_mapping import (
     logs_dropbox_errors,
     translate_dropbox_exception,
+    translate_folder_lookup_error,
     translate_lookup_error,
     translate_write_error,
 )
@@ -100,6 +101,53 @@ class DropboxStorage:
             raise ProviderError("Dropbox returned unsupported metadata")
 
         return self.to_file_resource(metadata)
+
+    @logs_dropbox_errors
+    def list_files(
+        self,
+        path: str,
+    ) -> list[FileResource]:
+        """Return every direct child of a Dropbox folder across all pages."""
+        dropbox_path = "" if path == "/" else path
+
+        try:
+            result = self.client.files_list_folder(
+                dropbox_path,
+                recursive=False,
+            )
+            entries = list(result.entries)
+            seen_cursors: set[str] = set()
+
+            while result.has_more:
+                cursor = result.cursor
+                if not cursor or cursor in seen_cursors:
+                    raise ProviderError("Dropbox returned an invalid list cursor")
+                seen_cursors.add(cursor)
+                result = self.client.files_list_folder_continue(cursor)
+                entries.extend(result.entries)
+        except RequestException as exc:
+            raise ProviderUnavailableError(
+                "Dropbox could not list the requested folder"
+            ) from exc
+        except ApiError as exc:
+            if exc.error.is_path():
+                raise translate_folder_lookup_error(
+                    exc.error.get_path(), path
+                ) from exc
+            raise ProviderError("Dropbox could not list the requested folder") from exc
+        except DropboxException as exc:
+            raise translate_dropbox_exception(exc) from exc
+
+        resources: list[FileResource] = []
+        for entry in entries:
+            if isinstance(entry, FileMetadata):
+                resources.append(self.to_file_resource(entry, resource_type="file"))
+            elif isinstance(entry, FolderMetadata):
+                resources.append(self.to_file_resource(entry, resource_type="folder"))
+            else:
+                raise ProviderError("Dropbox returned unsupported list metadata")
+
+        return sorted(resources, key=lambda resource: resource.path)
 
     @logs_dropbox_errors
     def download(
@@ -229,6 +277,8 @@ class DropboxStorage:
     def to_file_resource(
         self,
         metadata: FileMetadata | FolderMetadata,
+        *,
+        resource_type: str | None = None,
     ) -> FileResource:
         if isinstance(metadata, FileMetadata):
             return FileResource(
@@ -238,7 +288,7 @@ class DropboxStorage:
                 size=metadata.size,
                 modified_at=format_utc_timestamp(metadata.server_modified),
                 etag=metadata.rev,
-                type=None,
+                type=resource_type,
             )
 
         return FileResource(
@@ -248,5 +298,5 @@ class DropboxStorage:
             size=None,
             modified_at=None,
             etag=None,
-            type=None,
+            type=resource_type,
         )

@@ -33,6 +33,7 @@ class CountingStorage(FakeDocumentStorage):
         super().__init__()
         self.metadata_calls = 0
         self.download_calls = 0
+        self.list_calls = 0
 
     def get_metadata(self, path):
         self.metadata_calls += 1
@@ -41,6 +42,10 @@ class CountingStorage(FakeDocumentStorage):
     def download(self, path):
         self.download_calls += 1
         return super().download(path)
+
+    def list_files(self, path):
+        self.list_calls += 1
+        return super().list_files(path)
 
 
 @pytest.fixture
@@ -121,6 +126,28 @@ def test_download_is_never_cached(cached, provider, redis_client):
 
     assert provider.download_calls == 2
     assert redis_client.keys("*") == []
+
+
+def test_list_is_forwarded_without_touching_redis(cached, provider, redis_client):
+    redis_client.set("unrelated", "keep")
+
+    first = cached.list_files("/docs")
+    second = cached.list_files("/docs")
+
+    assert [resource.path for resource in first] == ["/docs/report.pdf"]
+    assert second == first
+    assert provider.list_calls == 2
+    assert redis_client.keys("*") == ["unrelated"]
+
+
+def test_list_makes_no_redis_calls(provider):
+    redis_client = Mock()
+    cached = CachedDocumentStorage(provider, redis_client, TTL)
+
+    result = cached.list_files("/docs")
+
+    assert [resource.path for resource in result] == ["/docs/report.pdf"]
+    assert redis_client.mock_calls == []
 
 
 # --- TTL --------------------------------------------------------------------

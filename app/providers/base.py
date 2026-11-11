@@ -36,6 +36,13 @@ class DocumentStorage(Protocol):
         """
         ...
 
+    def list_files(
+        self,
+        path: str,
+    ) -> list[FileResource]:
+        """Return every direct child of a folder, sorted by canonical path."""
+        ...
+
     def download(
         self,
         path: str,

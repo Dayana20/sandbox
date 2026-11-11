@@ -1,7 +1,7 @@
 from app.errors import InvalidRequestError
 
 
-def validate_path(path: str | None) -> str:
+def validate_path(path: str | None, *, allow_root: bool = False) -> str:
     """
         Normalize and check a caller-supplied file path before any storage call.
 
@@ -10,14 +10,16 @@ def validate_path(path: str | None) -> str:
         returned in canonical absolute form, with exactly one leading slash.
 
         Args:
-            path (str | None): The path from the request, with or without a
+            path: The path from the request, with or without a
                 leading slash, e.g. "docs/report.pdf" or "/docs/report.pdf".
+            allow_root: Whether the canonical root path is valid. This is
+                enabled only by the List operation.
         Returns:
             str: The canonical absolute path.
         Raises:
             InvalidRequestError: If the path is missing, has a control character,
-                identifies the root, ends with "/", or has an empty, "." or
-                ".." segment.
+                identifies the root when ``allow_root`` is false, ends with
+                "/", or has an empty, "." or ".." segment.
     """
     if not path:
         raise InvalidRequestError("path is required")
@@ -29,9 +31,16 @@ def validate_path(path: str | None) -> str:
 
     canonical_path = path if path.startswith("/") else f"/{path}"
 
-    # Root is reserved for the future List operation. File operations and
-    # destructive operations must continue to reject it.
-    if canonical_path == "/" or canonical_path.endswith("/"):
+    # Root is valid only for List. File and destructive operations keep the
+    # default and therefore continue to reject it.
+    if canonical_path == "/":
+        if allow_root:
+            return canonical_path
+        raise InvalidRequestError(
+            f"path must identify a resource below root: {path}"
+        )
+
+    if canonical_path.endswith("/"):
         raise InvalidRequestError(
             f"path must identify a resource below root: {path}"
         )

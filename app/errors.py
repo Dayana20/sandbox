@@ -21,6 +21,10 @@ class FileConflictError(StorageError):
     pass
 
 
+class InvalidOperationError(StorageError):
+    """Valid input that cannot be used for the requested operation."""
+
+
 class ProviderError(StorageError):
     pass
 

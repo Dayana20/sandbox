@@ -44,6 +44,13 @@ def test_valid_path_is_returned_in_canonical_form(path, expected):
     assert validate_path(path) == expected
 
 
+def test_root_is_valid_only_when_explicitly_allowed():
+    assert validate_path("/", allow_root=True) == "/"
+
+    with pytest.raises(InvalidRequestError):
+        validate_path("/")
+
+
 @pytest.mark.parametrize("path", [None, ""])
 def test_missing_path_is_rejected(path):
     with pytest.raises(InvalidRequestError, match="path is required"):

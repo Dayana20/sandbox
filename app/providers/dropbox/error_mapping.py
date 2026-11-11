@@ -16,6 +16,7 @@ from dropbox.files import LookupError, WriteError
 from app.errors import (
     FileConflictError,
     FileNotFoundError,
+    InvalidOperationError,
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
@@ -143,6 +144,17 @@ def translate_lookup_error(
     return ProviderError(
         f"Unable to access file: {path}"
     )
+
+
+def translate_folder_lookup_error(
+    error: LookupError,
+    path: str,
+) -> Exception:
+    """Translate a lookup performed specifically as a folder operation."""
+    if error.is_not_folder() or error.is_not_file():
+        return InvalidOperationError(f"Path is not a folder: {path}")
+
+    return translate_lookup_error(error, path)
 
 
 def translate_write_error(
