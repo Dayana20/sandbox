@@ -476,9 +476,34 @@ BAD_VALUES = [
     "this is not json {",
     '{"id": 1}',
     '{"id": "x", "name": "n", "path": "/p", "size": "big"}',
+    (
+        '{"id": "x", "name": "n", "path": "/p", "size": 1, '
+        '"modified_at": "not-a-timestamp"}'
+    ),
     "[]",
     "null",
 ]
+
+
+def test_legacy_cached_metadata_is_normalized_without_provider_call(
+    cached, provider, redis_client
+):
+    redis_client.set(
+        metadata_key(PATH),
+        (
+            '{"id":"legacy","name":"report.pdf",'
+            '"path":"/docs/report.pdf","size":5,'
+            '"modified_at":"2026-10-05T14:30:00"}'
+        ),
+        ex=TTL,
+    )
+
+    result = cached.get_metadata(PATH)
+
+    assert result.modified_at == "2026-10-05T14:30:00Z"
+    assert result.etag is None
+    assert result.type is None
+    assert provider.metadata_calls == 0
 
 
 @pytest.mark.parametrize("raw", BAD_VALUES)
@@ -671,20 +696,45 @@ def test_cache_logs_show_the_same_key_id_for_every_spelling_of_a_path(
 # --- through the HTTP API and the dependency wiring --------------------------
 
 
-def test_http_metadata_is_served_from_cache(provider, redis_client):
+@pytest.mark.parametrize(
+    ("first_path", "second_path"),
+    [(PATH, "docs/report.pdf"), ("docs/report.pdf", PATH)],
+)
+def test_http_equivalent_metadata_paths_share_one_cache_entry(
+    first_path, second_path, provider, redis_client
+):
     app = create_app()
     app.dependency_overrides[get_document_storage] = lambda: CachedDocumentStorage(
         provider, redis_client, TTL
     )
     client = TestClient(app)
 
-    first = client.get("/files/metadata", params={"path": PATH})
-    second = client.get("/files/metadata", params={"path": PATH})
+    first = client.get("/files/metadata", params={"path": first_path})
+    second = client.get("/files/metadata", params={"path": second_path})
 
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
     assert first.json()["path"] == PATH
     assert provider.metadata_calls == 1
+    assert redis_client.keys("*") == [metadata_key(PATH)]
+
+
+def test_http_relative_delete_invalidates_canonical_metadata_key(
+    provider, redis_client
+):
+    app = create_app()
+    app.dependency_overrides[get_document_storage] = lambda: CachedDocumentStorage(
+        provider, redis_client, TTL
+    )
+    client = TestClient(app)
+
+    cached = client.get("/files/metadata", params={"path": PATH})
+    deleted = client.delete("/files", params={"path": "docs/report.pdf"})
+
+    assert cached.status_code == 200
+    assert deleted.status_code == 204
+    assert redis_client.get(metadata_key(PATH)) is None
+    assert PATH not in provider.files
 
 
 def test_storage_is_not_cached_without_redis_url(monkeypatch):

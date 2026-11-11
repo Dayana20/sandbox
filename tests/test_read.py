@@ -1,9 +1,17 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_document_storage
-from app.errors import InvalidRequestError, PermissionDeniedError, ProviderError
+from app.errors import (
+    InvalidRequestError,
+    PermissionDeniedError,
+    ProviderError,
+    ProviderUnavailableError,
+)
 from app.main import app
+from app.models.file import FileResource
 from tests.fakes import FakeDocumentStorage
 
 from app.providers.dropbox.storage import DropboxStorage
@@ -38,9 +46,77 @@ def test_get_metadata(storage):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["name"] == "report.pdf"
-    assert body["path"] == "/docs/report.pdf"
-    assert body["size"] == 5
+    assert body == {
+        "id": "/docs/report.pdf",
+        "name": "report.pdf",
+        "path": "/docs/report.pdf",
+        "size": 5,
+        "modified_at": None,
+        "etag": None,
+        "type": None,
+    }
+    assert response.headers["X-Request-ID"]
+
+
+def test_get_metadata_serializes_folder_without_provider_fields():
+    class FolderStorage(FakeDocumentStorage):
+        def get_metadata(self, path):
+            return FileResource(
+                id="id:folder",
+                name="docs",
+                path=path,
+                size=None,
+                modified_at=None,
+                etag=None,
+                type=None,
+            )
+
+    app.dependency_overrides[get_document_storage] = FolderStorage
+    try:
+        response = get_metadata("docs")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "id:folder",
+        "name": "docs",
+        "path": "/docs",
+        "size": None,
+        "modified_at": None,
+        "etag": None,
+        "type": None,
+    }
+
+
+def test_get_metadata_serializes_timestamp_as_utc_z():
+    class TimestampStorage(FakeDocumentStorage):
+        def get_metadata(self, path):
+            return FileResource(
+                id="id:file",
+                name="report.pdf",
+                path=path,
+                size=5,
+                modified_at=datetime(
+                    2026,
+                    11,
+                    4,
+                    9,
+                    30,
+                    tzinfo=timezone(timedelta(hours=-5)),
+                ),
+                etag="015rev",
+                type=None,
+            )
+
+    app.dependency_overrides[get_document_storage] = TimestampStorage
+    try:
+        response = get_metadata("/report.pdf")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["modified_at"] == "2026-11-04T14:30:00Z"
 
 
 def test_get_metadata_missing_file(storage):
@@ -57,12 +133,32 @@ def test_get_metadata_without_path(storage):
     assert response.json()["error"]["code"] == "invalid_request"
 
 
-@pytest.mark.parametrize("path", ["", "report.pdf", "/docs/", "/docs/../report.pdf"])
+@pytest.mark.parametrize("path", ["", "/docs/", "/docs/../report.pdf"])
 def test_get_metadata_bad_path(storage, path):
     response = get_metadata(path)
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+# Controlled HTTP compatibility coverage. These are Team 1 route tests, not
+# the official shared conformance suite.
+@pytest.mark.parametrize("path", ["docs/report.pdf", "/docs/report.pdf"])
+def test_get_metadata_normalizes_equivalent_paths(storage, path):
+    storage.upload("/docs/report.pdf", b"hello")
+
+    response = get_metadata(path)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "/docs/report.pdf",
+        "name": "report.pdf",
+        "path": "/docs/report.pdf",
+        "size": 5,
+        "modified_at": None,
+        "etag": None,
+        "type": None,
+    }
 
 
 def test_get_metadata_does_not_change_storage(storage):
@@ -111,5 +207,23 @@ def test_get_metadata_dropbox_timeout():
     response = get_metadata("/report.pdf")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 502
-    assert response.json()["error"]["code"] == "provider_error"
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "provider_unavailable"
+
+
+def test_get_metadata_provider_unavailable_uses_shared_error_shape():
+    app.dependency_overrides[get_document_storage] = lambda: FailingStorage(
+        ProviderUnavailableError("Dropbox is temporarily unavailable")
+    )
+    try:
+        response = get_metadata("/report.pdf")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "provider_unavailable",
+            "message": "Dropbox is temporarily unavailable",
+        }
+    }

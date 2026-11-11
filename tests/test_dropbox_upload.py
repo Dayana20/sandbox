@@ -1,9 +1,10 @@
-from types import SimpleNamespace
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
 from dropbox.exceptions import ApiError, RateLimitError
 from dropbox.files import (
+    FileMetadata,
     UploadError,
     UploadWriteFailed,
     WriteConflictError,
@@ -27,12 +28,14 @@ def upload_error(reason):
 
 def test_dropbox_upload_success():
     mock_client = Mock()
-    mock_client.files_upload.return_value = SimpleNamespace(
+    mock_client.files_upload.return_value = FileMetadata(
         id="id:abc123",
         name="report.pdf",
         path_display="/docs/report.pdf",
         size=5,
-        server_modified="2026-10-05T12:00:00",
+        server_modified=datetime(2026, 10, 5, 12, 0),
+        client_modified=datetime(2026, 10, 5, 12, 0),
+        rev="015abcdef",
     )
     storage = DropboxStorage(client=mock_client)
 
@@ -49,6 +52,8 @@ def test_dropbox_upload_success():
     assert result.id == "id:abc123"
     assert result.name == "report.pdf"
     assert result.size == 5
+    assert result.modified_at == "2026-10-05T12:00:00Z"
+    assert result.etag == "015abcdef"
 
 
 @pytest.mark.parametrize(

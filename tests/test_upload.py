@@ -64,13 +64,21 @@ def test_upload_without_path(storage):
 
 @pytest.mark.parametrize(
     "path",
-    ["", "report.pdf", "/docs/", "//report.pdf", "/docs/../report.pdf"],
+    ["", "/docs/", "//report.pdf", "/docs/../report.pdf"],
 )
 def test_upload_bad_path(storage, path):
     response = post_file(path, b"hello")
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_upload_without_leading_slash_uses_canonical_path(storage):
+    response = post_file("docs/report.pdf", b"hello")
+
+    assert response.status_code == 201
+    assert response.json()["path"] == "/docs/report.pdf"
+    assert storage.download("/docs/report.pdf") == b"hello"
 
 
 def test_upload_without_file(storage):

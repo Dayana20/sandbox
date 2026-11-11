@@ -1,9 +1,14 @@
 import dropbox
 from dropbox.exceptions import ApiError, DropboxException
-from dropbox.files import FileMetadata, WriteMode
+from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata, WriteMode
 
-from app.errors import InvalidRequestError, ProviderError
-from app.models.file import FileResource
+from app.errors import (
+    FileNotFoundError,
+    InvalidRequestError,
+    ProviderError,
+    ProviderUnavailableError,
+)
+from app.models.file import FileResource, format_utc_timestamp
 from app.providers.dropbox.error_mapping import (
     logs_dropbox_errors,
     translate_dropbox_exception,
@@ -78,7 +83,9 @@ class DropboxStorage:
         try:
             metadata = self.client.files_get_metadata(path)
         except RequestException as exc:
-            raise ProviderError(f"Dropbox could not read metadata: {path}") from exc
+            raise ProviderUnavailableError(
+                f"Dropbox could not read metadata: {path}"
+            ) from exc
         except ApiError as exc:
             if exc.error.is_path():
                 raise translate_lookup_error(exc.error.get_path(), path) from exc
@@ -86,9 +93,11 @@ class DropboxStorage:
         except DropboxException as exc:
             raise translate_dropbox_exception(exc) from exc
 
-        # folders have no size, so they can't be returned as a FileResource
-        if not isinstance(metadata, FileMetadata):
-            raise InvalidRequestError(f"Only files have metadata: {path}")
+        if isinstance(metadata, DeletedMetadata):
+            raise FileNotFoundError(f"File not found: {path}")
+
+        if not isinstance(metadata, (FileMetadata, FolderMetadata)):
+            raise ProviderError("Dropbox returned unsupported metadata")
 
         return self.to_file_resource(metadata)
 
@@ -217,11 +226,27 @@ class DropboxStorage:
         except DropboxException as exc:
             raise translate_dropbox_exception(exc) from exc
 
-    def to_file_resource(self, metadata: dropbox.files.FileMetadata) -> FileResource:
+    def to_file_resource(
+        self,
+        metadata: FileMetadata | FolderMetadata,
+    ) -> FileResource:
+        if isinstance(metadata, FileMetadata):
+            return FileResource(
+                id=metadata.id,
+                name=metadata.name,
+                path=metadata.path_display,
+                size=metadata.size,
+                modified_at=format_utc_timestamp(metadata.server_modified),
+                etag=metadata.rev,
+                type=None,
+            )
+
         return FileResource(
             id=metadata.id,
             name=metadata.name,
             path=metadata.path_display,
-            size=metadata.size,
-            modified_at=metadata.server_modified,
+            size=None,
+            modified_at=None,
+            etag=None,
+            type=None,
         )

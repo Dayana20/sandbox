@@ -18,7 +18,10 @@ ERROR_DESCRIPTIONS = {
     404: "`not_found`: nothing exists at the path",
     409: "`conflict`: a file already exists at the target path",
     502: "`provider_error`: Dropbox failed or is unreachable",
-    503: "`provider_not_configured`: Dropbox credentials are missing",
+    503: (
+        "`provider_unavailable`: Dropbox is temporarily unavailable; "
+        "`provider_not_configured`: Dropbox credentials are missing"
+    ),
 }
 
 

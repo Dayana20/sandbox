@@ -83,6 +83,8 @@ class FakeDocumentStorage:
             path=new_path,
             size=resource.size,
             modified_at=resource.modified_at,
+            etag=resource.etag,
+            type=resource.type,
         )
 
         self.files[new_path] = (

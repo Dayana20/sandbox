@@ -19,6 +19,7 @@ from app.errors import (
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
+    ProviderUnavailableError,
     StorageError,
 )
 
@@ -105,7 +106,7 @@ def translate_dropbox_exception(
         )
 
     if isinstance(exc, InternalServerError):
-        return ProviderError(
+        return ProviderUnavailableError(
             "Dropbox is temporarily unavailable"
         )
 

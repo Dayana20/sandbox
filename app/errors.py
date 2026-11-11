@@ -25,6 +25,10 @@ class ProviderError(StorageError):
     pass
 
 
+class ProviderUnavailableError(ProviderError):
+    """The storage provider is temporarily unreachable or unavailable."""
+
+
 class IdempotencyError(Exception):
     """
         Base for errors about an Idempotency-Key, not about the storage.

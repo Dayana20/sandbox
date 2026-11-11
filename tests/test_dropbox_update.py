@@ -39,6 +39,8 @@ def test_dropbox_move_success():
             path_display="/archive/final.pdf",
             size=5,
             server_modified=datetime(2026, 10, 5, 14, 30),
+            client_modified=datetime(2026, 10, 5, 14, 30),
+            rev="015abcdef",
         )
     )
     storage = DropboxStorage(client=mock_client)
@@ -52,6 +54,8 @@ def test_dropbox_move_success():
     assert result.name == "final.pdf"
     assert result.path == "/archive/final.pdf"
     assert result.size == 5
+    assert result.modified_at == "2026-10-05T14:30:00Z"
+    assert result.etag == "015abcdef"
 
 
 def test_dropbox_move_refuses_folder():

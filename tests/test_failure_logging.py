@@ -63,7 +63,7 @@ def test_missing_file_is_logged(storage, caplog):
 
 def test_invalid_input_is_logged(storage, caplog):
     with caplog.at_level(logging.INFO, logger=LOGGER):
-        response = client.delete("/files", params={"path": "no-slash.pdf"})
+        response = client.delete("/files", params={"path": "docs/../unsafe.pdf"})
 
     assert response.status_code == 400
     [record] = failure_logs(caplog)

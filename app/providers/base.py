@@ -31,7 +31,8 @@ class DocumentStorage(Protocol):
         path: str,
     ) -> FileResource:
         """
-            Return metadata of the file at path. Read only.
+            Return provider-neutral metadata of the file or folder at path.
+            Read only.
         """
         ...
 

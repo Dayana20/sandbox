@@ -15,6 +15,7 @@ from app.errors import (
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
+    ProviderUnavailableError,
     StorageError,
     StorageNotConfiguredError,
 )
@@ -32,6 +33,7 @@ ERRORS: dict[type[StorageError], tuple[int, str]] = {
     FileNotFoundError: (404, "not_found"),
     FileConflictError: (409, "conflict"),
     ProviderError: (502, "provider_error"),
+    ProviderUnavailableError: (503, "provider_unavailable"),
     StorageNotConfiguredError: (503, "provider_not_configured"),
 }
 

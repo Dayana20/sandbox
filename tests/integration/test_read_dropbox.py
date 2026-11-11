@@ -26,12 +26,17 @@ def test_get_metadata_from_real_dropbox():
     uploaded = dbx.files_upload(content, path)
 
     try:
-        response = client.get("/files/metadata", params={"path": path})
+        response = client.get(
+            "/files/metadata", params={"path": path.removeprefix("/")}
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["id"] == uploaded.id
         assert body["path"] == path
         assert body["size"] == len(content)
+        assert body["modified_at"].endswith("Z")
+        assert body["etag"] == uploaded.rev
+        assert body["type"] is None
 
         # a path that doesn't exist should be 404, not 500
         missing = client.get("/files/metadata", params={"path": path + ".missing"})
@@ -39,7 +44,29 @@ def test_get_metadata_from_real_dropbox():
         assert missing.json()["error"]["code"] == "not_found"
     finally:
         # delete the test file so the folder stays clean
-        try:
-            dbx.files_delete_v2(path)
-        except Exception:
-            pass
+        dbx.files_delete_v2(path)
+
+
+def test_get_folder_metadata_from_real_dropbox():
+    dbx = create_dropbox_client()
+    client = TestClient(app)
+    path = f"/integration-tests/metadata-folder-{uuid.uuid4().hex}"
+    created = dbx.files_create_folder_v2(path).metadata
+
+    try:
+        response = client.get(
+            "/files/metadata", params={"path": path.removeprefix("/")}
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "id": created.id,
+            "name": created.name,
+            "path": created.path_display,
+            "size": None,
+            "modified_at": None,
+            "etag": None,
+            "type": None,
+        }
+    finally:
+        dbx.files_delete_v2(path)

@@ -78,10 +78,19 @@ def test_delete_without_path(storage):
 
 
 def test_delete_bad_path(storage):
-    response = delete_file("report.pdf")
+    response = delete_file("docs/../report.pdf")
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_delete_without_leading_slash_uses_canonical_path(storage):
+    storage.upload("/docs/report.pdf", b"hello")
+
+    response = delete_file("docs/report.pdf")
+
+    assert response.status_code == 204
+    assert "/docs/report.pdf" not in storage.files
 
 
 class FailingStorage(FakeDocumentStorage):

@@ -350,6 +350,43 @@ def test_stored_result_survives_a_new_service_and_app(redis_client):
     assert PATH not in second_storage.files
 
 
+def test_legacy_stored_result_replays_with_new_optional_fields(redis_client):
+    fingerprint = upload_fingerprint(PATH, b"hello")
+    redis_client.set(
+        redis_key(hash_key(KEY)),
+        json.dumps(
+            {
+                "state": "succeeded",
+                "fingerprint": fingerprint,
+                "owner": "legacy-owner",
+                "response": {
+                    "id": "id:legacy",
+                    "name": "a.txt",
+                    "path": PATH,
+                    "size": 5,
+                    "modified_at": "2026-10-05T14:30:00",
+                },
+            }
+        ),
+        ex=TTL,
+    )
+    storage = CountingStorage()
+
+    replay = post(make_client(storage, make_service(redis_client)))
+
+    assert replay.status_code == 201
+    assert replay.json() == {
+        "id": "id:legacy",
+        "name": "a.txt",
+        "path": PATH,
+        "size": 5,
+        "modified_at": "2026-10-05T14:30:00Z",
+        "etag": None,
+        "type": None,
+    }
+    assert storage.upload_calls == 0
+
+
 def test_conflict_and_uncertain_state_also_survive_a_restart(redis_client):
     failing = FailingStorage(ProviderError("Dropbox is down"))
     post(make_client(failing, make_service(redis_client)))
@@ -473,7 +510,7 @@ def test_failed_release_does_not_hide_the_provider_error(redis_client):
 
 @pytest.mark.parametrize(
     "path",
-    ["", "report.pdf", "/docs/", "//report.pdf", "/docs/../report.pdf"],
+    ["", "/docs/", "//report.pdf", "/docs/../report.pdf"],
 )
 def test_bad_path_is_rejected_before_idempotency_or_the_provider(
     path, client, storage, redis_client
@@ -488,13 +525,31 @@ def test_bad_path_is_rejected_before_idempotency_or_the_provider(
 
 
 def test_key_is_reusable_after_a_local_rejection(client, storage, redis_client):
-    rejected = post(client, path="docs/no-leading-slash.txt")
+    rejected = post(client, path="docs/../unsafe.txt")
     corrected = post(client, path="/docs/fixed.txt")
 
     assert rejected.status_code == 400
     assert corrected.status_code == 201
     assert storage.upload_calls == 1
     assert stored_record(redis_client)["state"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("first_path", "replay_path"),
+    [("docs/a.txt", "/docs/a.txt"), ("/docs/a.txt", "docs/a.txt")],
+)
+def test_equivalent_paths_share_one_idempotent_request(
+    first_path, replay_path, storage, redis_client
+):
+    client = make_client(storage, make_service(redis_client))
+
+    first = post(client, path=first_path)
+    replay = post(client, path=replay_path)
+
+    assert first.status_code == replay.status_code == 201
+    assert first.json() == replay.json()
+    assert first.json()["path"] == "/docs/a.txt"
+    assert storage.upload_calls == 1
 
 
 def test_missing_file_and_oversized_file_are_rejected_locally(
