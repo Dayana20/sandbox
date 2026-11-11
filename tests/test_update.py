@@ -18,14 +18,14 @@ def storage():
     app.dependency_overrides.clear()
 
 
-def move_file(path=None, new_path=None):
+def move_file(from_path=None, to_path=None):
     params = {}
     body = {}
 
-    if path is not None:
-        params["path"] = path
-    if new_path is not None:
-        body["new_path"] = new_path
+    if from_path is not None:
+        params["from_path"] = from_path
+    if to_path is not None:
+        body["to_path"] = to_path
 
     return client.patch("/files", params=params, json=body)
 

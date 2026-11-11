@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -15,13 +15,13 @@ from dropbox.files import (
 )
 
 from app.errors import (
-    FileConflictError,
     FileNotFoundError,
     InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
 )
 from app.providers.dropbox.storage import DropboxStorage
+from cloud_storage_api import ConflictError
 
 
 def file_client():
@@ -38,9 +38,8 @@ def test_dropbox_move_success():
             name="final.pdf",
             path_display="/archive/final.pdf",
             size=5,
-            server_modified=datetime(2026, 10, 5, 14, 30),
-            client_modified=datetime(2026, 10, 5, 14, 30),
-            rev="015abcdef",
+            server_modified=datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc),
+            rev="abcdef123",
         )
     )
     storage = DropboxStorage(client=mock_client)
@@ -55,7 +54,7 @@ def test_dropbox_move_success():
     assert result.path == "/archive/final.pdf"
     assert result.size == 5
     assert result.modified_at == "2026-10-05T14:30:00Z"
-    assert result.etag == "015abcdef"
+    assert result.etag == "abcdef123"
 
 
 def test_dropbox_move_refuses_folder():
@@ -87,7 +86,7 @@ def test_dropbox_move_missing_file():
     [
         (RelocationError.from_lookup(LookupError.not_found), FileNotFoundError),
         (RelocationError.from_write(WriteError.no_write_permission), PermissionDeniedError),
-        (RelocationError.to(WriteError.conflict(WriteConflictError.file)), FileConflictError),
+        (RelocationError.to(WriteError.conflict(WriteConflictError.file)), ConflictError),
         (RelocationError.to(WriteError.no_write_permission), PermissionDeniedError),
         (RelocationError.to(WriteError.disallowed_name), InvalidRequestError),
         (RelocationError.insufficient_quota, ProviderError),
@@ -109,7 +108,7 @@ def test_dropbox_move_conflict_names_destination():
     )
     storage = DropboxStorage(client=mock_client)
 
-    with pytest.raises(FileConflictError, match="/renamed.pdf"):
+    with pytest.raises(ConflictError, match="/renamed.pdf"):
         storage.move("/report.pdf", "/renamed.pdf")
 
 

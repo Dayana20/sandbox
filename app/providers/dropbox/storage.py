@@ -1,6 +1,9 @@
 import dropbox
 from dropbox.exceptions import ApiError, DropboxException
-from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata, WriteMode
+from dropbox.files import FileMetadata, WriteMode, DeletedMetadata, FolderMetadata
+from cloud_storage_api import FileInfo, ConflictError
+from datetime import timezone
+
 
 from app.errors import (
     FileNotFoundError,
@@ -181,17 +184,17 @@ class DropboxStorage:
     @logs_dropbox_errors
     def move(
         self,
-        path: str,
-        new_path: str,
-    ) -> FileResource:
+        from_path: str,
+        to_path: str,
+    ) -> FileInfo:
         """
             Rename or move a file in cloud storage.
 
             Args:
-                path (str): The file to move, e.g. "/docs/report.pdf".
-                new_path (str): Where it should end up, e.g. "/archive/report.pdf".
+                from_path (str): The file to move, e.g. "/docs/report.pdf".
+                to_path (str): Where it should end up, e.g. "/archive/report.pdf".
             Returns:
-                FileResource: Metadata of the file at its new path. The id does not change.
+                FileInfo: Metadata of the file at its new path. The id does not change.
             Raises:
                 FileNotFoundError: If nothing exists at path.
                 InvalidRequestError: If path is a folder.
@@ -200,38 +203,41 @@ class DropboxStorage:
         """
         # Dropbox moves folders with everything inside, so check it is a file first
         try:
-            metadata = self.client.files_get_metadata(path)
+            metadata = self.client.files_get_metadata(from_path)
         except RequestException as exc:
-            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
+            raise ProviderError(f"Dropbox could not inspect: {from_path}") from exc
         except ApiError as exc:
             if exc.error.is_path():
-                raise translate_lookup_error(exc.error.get_path(), path) from exc
-            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
+                raise translate_lookup_error(exc.error.get_path(), from_path) from exc
+            raise ProviderError(f"Dropbox could not inspect: {from_path}") from exc
         except DropboxException as exc:
             raise translate_dropbox_exception(exc) from exc
 
         if not isinstance(metadata, FileMetadata):
-            raise InvalidRequestError(f"Only files can be moved: {path}")
+            raise InvalidRequestError(f"Only files can be moved: {from_path}")
 
-        # autorename=False so an existing file at new_path is never overwritten
+        # autorename=False so an existing file at to_path is never overwritten
         # or renamed. Dropbox returns a conflict error instead.
         try:
-            result = self.client.files_move_v2(path, new_path, autorename=False)
+            result = self.client.files_move_v2(from_path, to_path, autorename=False)
         except RequestException as exc:
-            raise ProviderError(f"Dropbox could not move: {path}") from exc
+            raise ProviderError(f"Dropbox could not move: {from_path}") from exc
         except ApiError as exc:
             error = exc.error
             if error.is_from_lookup():
-                raise translate_lookup_error(error.get_from_lookup(), path) from exc
+                raise translate_lookup_error(error.get_from_lookup(), from_path) from exc
             if error.is_from_write():
-                raise translate_write_error(error.get_from_write(), path) from exc
+                raise translate_write_error(error.get_from_write(), from_path) from exc
             if error.is_to():
-                raise translate_write_error(error.get_to(), new_path) from exc
-            raise ProviderError(f"Dropbox could not move: {path}") from exc
+                destination_error = error.get_to()
+                if destination_error.is_conflict():
+                    raise ConflictError(f"File already exists: {to_path}") from exc
+                raise translate_write_error(destination_error, to_path) from exc
+            raise ProviderError(f"Dropbox could not move: {from_path}") from exc
         except DropboxException as exc:
             raise translate_dropbox_exception(exc) from exc
 
-        return self.to_file_resource(result.metadata)
+        return self.to_file_info(result.metadata)
 
     @logs_dropbox_errors
     def delete(
@@ -297,7 +303,6 @@ class DropboxStorage:
             path=metadata.path_display,
             size=None,
             modified_at=None,
-            etag=None,
             type=resource_type,
         )
     @logs_dropbox_errors
@@ -318,3 +323,16 @@ class DropboxStorage:
             raise ProviderUnavailableError(
                 "Dropbox could not be reached"
             ) from exc
+
+    def to_file_info(self, metadata: dropbox.files.FileMetadata) -> FileInfo:
+            modified_at = metadata.server_modified.astimezone(timezone.utc).isoformat()
+            modified_at = modified_at.replace("+00:00", "Z")
+            return FileInfo(
+                id=metadata.id,
+                name=metadata.name,
+                path=metadata.path_display,
+                size=metadata.size,
+                modified_at=modified_at,
+                etag=metadata.rev,
+                type=None,
+            )

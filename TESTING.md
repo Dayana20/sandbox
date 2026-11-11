@@ -59,8 +59,9 @@ Tests check what a caller can observe (status, body, stored bytes), not private 
 
 ### Update: `PATCH /files` (rename or move)
 
-- **Contract:** `200` with the new metadata, same `id` and bytes, old path gone. Never overwrites: something at `new_path` gives `409` and nothing moves.
-- **Cases:** move, content kept and old path gone, case-only rename refused, repeating a move returns `404`, missing file, move onto an existing file refused, invalid input never touches storage, badly typed body uses our error shape, each storage error. The mocked Dropbox tests check source errors are reported against `path` and destination errors against `new_path`.
+- **Contract:** `200` with the new metadata, same `id` and bytes, old path gone. Never overwrites: something at `to_path` gives `409` and nothing moves.
+- **Request:** source is the `from_path` query parameter; destination is the `to_path` JSON body field.
+- **Cases:** move, content kept and old path gone, case-only rename refused, repeating a move returns `404`, missing file, move onto an existing file refused, invalid input never touches storage, badly typed body uses our error shape, each storage error. The mocked Dropbox tests check source errors are reported against `from_path` and destination errors against `to_path`.
 - **Live:** move into a new subfolder, check the id and bytes, repeat returns `404`, move onto an existing file returns `409`.
 
 ### Delete: `DELETE /files`

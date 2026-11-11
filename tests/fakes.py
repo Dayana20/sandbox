@@ -4,7 +4,8 @@ from app.errors import (
     InvalidOperationError,
 )
 from app.models.file import FileResource
-
+from cloud_storage_api import FileInfo, ConflictError
+from datetime import timezone
 
 class FakeDocumentStorage:
 
@@ -121,39 +122,55 @@ class FakeDocumentStorage:
 
     def move(
         self,
-        path: str,
-        new_path: str,
-    ) -> FileResource:
+        from_path: str,
+        to_path: str,
+    ) -> FileInfo:
 
-        if path not in self.files:
+        if from_path not in self.files:
             raise FileNotFoundError(
-                f"File not found: {path}"
+                f"File not found: {from_path}"
             )
 
-        if new_path in self.files or new_path in self.folders:
-            raise FileConflictError(
-                f"File already exists: {new_path}"
+        if to_path in self.files:
+            raise ConflictError(
+                f"File already exists: {to_path}"
+            )
+        if to_path in self.folders:
+            raise ConflictError(
+                f"Path already exists: {to_path}"
             )
 
-        self._ensure_parent_folders(new_path)
-        resource, content = self.files.pop(path)
+        resource, content = self.files.pop(from_path)
+        self._ensure_parent_folders(to_path)
 
-        updated = FileResource(
+        updated_resource = FileResource(
             id=resource.id,
-            name=new_path.split("/")[-1],
-            path=new_path,
+            name=to_path.split("/")[-1],
+            path=to_path,
             size=resource.size,
             modified_at=resource.modified_at,
             etag=resource.etag,
             type=resource.type,
         )
 
-        self.files[new_path] = (
-            updated,
+        self.files[to_path] = (
+            updated_resource,
             content,
         )
 
-        return updated
+        modified_at = updated_resource.modified_at
+        if modified_at is not None:
+            modified_at = modified_at.astimezone(timezone.utc).isoformat()
+
+        return FileInfo(
+            id=updated_resource.id,
+            name=updated_resource.name,
+            path=updated_resource.path,
+            size=updated_resource.size,
+            modified_at=modified_at,
+            etag=None,
+            type=None,
+        )
 
     def delete(
         self,
