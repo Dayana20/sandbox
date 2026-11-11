@@ -9,6 +9,8 @@ from redis.exceptions import RedisError
 from app.errors import FileNotFoundError, ProviderError, StorageError
 from app.models.file import FileResource
 from app.providers.base import DocumentStorage
+from cloud_storage_api import ConflictError, FileInfo
+
 
 logger = logging.getLogger(__name__)
 
@@ -109,16 +111,16 @@ class CachedDocumentStorage:
 
     def move(
         self,
-        path: str,
-        new_path: str,
-    ) -> FileResource:
+        from_path: str,
+        to_path: str,
+    ) -> FileInfo:
         return self._mutate(
-            [path, new_path],
-            lambda: self.storage.move(path, new_path),
+            [from_path, to_path],
+            lambda: self.storage.move(from_path, to_path),
             # A move's not_found always means the source: the wrapped storage
             # reports a missing destination as a conflict or provider error,
             # never as not_found. So only the source entry is stale.
-            not_found_paths=[path],
+            not_found_paths=[from_path],
         )
 
     def delete(
@@ -145,6 +147,9 @@ class CachedDocumentStorage:
         """
         try:
             result = call()
+        except ConflictError:
+            # A clean refusal that changed nothing, so the cache is still right.
+            raise
         except StorageError as exc:
             if isinstance(exc, ProviderError):
                 # We don't know what the provider did.
