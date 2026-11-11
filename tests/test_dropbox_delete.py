@@ -4,30 +4,21 @@ import pytest
 from dropbox.exceptions import ApiError, RateLimitError
 from dropbox.files import (
     DeleteError,
-    FileMetadata,
-    FolderMetadata,
-    GetMetadataError,
     LookupError,
     WriteError,
 )
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from app.errors import (
     FileNotFoundError,
-    InvalidRequestError,
     PermissionDeniedError,
     ProviderError,
 )
 from app.providers.dropbox.storage import DropboxStorage
 
 
-def file_client():
+def test_dropbox_delete_file():
     mock_client = Mock()
-    mock_client.files_get_metadata.return_value = Mock(spec=FileMetadata)
-    return mock_client
-
-
-def test_dropbox_delete_success():
-    mock_client = file_client()
     storage = DropboxStorage(client=mock_client)
 
     result = storage.delete("/docs/report.pdf")
@@ -36,28 +27,17 @@ def test_dropbox_delete_success():
     assert result is None
 
 
-def test_dropbox_delete_refuses_folder():
+def test_dropbox_delete_folder_is_one_call():
+    # files_delete_v2 removes a folder with everything in it, so a folder
+    # needs no metadata check and no listing first.
     mock_client = Mock()
-    mock_client.files_get_metadata.return_value = Mock(spec=FolderMetadata)
     storage = DropboxStorage(client=mock_client)
 
-    with pytest.raises(InvalidRequestError):
-        storage.delete("/docs")
+    storage.delete("/docs")
 
-    mock_client.files_delete_v2.assert_not_called()
-
-
-def test_dropbox_delete_missing_file():
-    mock_client = Mock()
-    mock_client.files_get_metadata.side_effect = ApiError(
-        "req", GetMetadataError.path(LookupError.not_found), None, None
-    )
-    storage = DropboxStorage(client=mock_client)
-
-    with pytest.raises(FileNotFoundError):
-        storage.delete("/report.pdf")
-
-    mock_client.files_delete_v2.assert_not_called()
+    mock_client.files_delete_v2.assert_called_once_with("/docs")
+    mock_client.files_get_metadata.assert_not_called()
+    mock_client.files_list_folder.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -66,10 +46,11 @@ def test_dropbox_delete_missing_file():
         (DeleteError.path_lookup(LookupError.not_found), FileNotFoundError),
         (DeleteError.path_write(WriteError.no_write_permission), PermissionDeniedError),
         (DeleteError.too_many_write_operations, ProviderError),
+        (DeleteError.too_many_files, ProviderError),
     ],
 )
 def test_dropbox_delete_errors(error, expected):
-    mock_client = file_client()
+    mock_client = Mock()
     mock_client.files_delete_v2.side_effect = ApiError("req", error, None, None)
     storage = DropboxStorage(client=mock_client)
 
@@ -79,7 +60,17 @@ def test_dropbox_delete_errors(error, expected):
 
 def test_dropbox_delete_rate_limited():
     mock_client = Mock()
-    mock_client.files_get_metadata.side_effect = RateLimitError("req", None, 1)
+    mock_client.files_delete_v2.side_effect = RateLimitError("req", None, 1)
+    storage = DropboxStorage(client=mock_client)
+
+    with pytest.raises(ProviderError):
+        storage.delete("/report.pdf")
+
+
+def test_dropbox_delete_network_failure_is_a_provider_error():
+    # The request may have reached Dropbox, so the outcome is unknown.
+    mock_client = Mock()
+    mock_client.files_delete_v2.side_effect = RequestsConnectionError("reset")
     storage = DropboxStorage(client=mock_client)
 
     with pytest.raises(ProviderError):

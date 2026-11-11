@@ -267,6 +267,31 @@ def test_failed_delete_keeps_the_cache(cached, redis_client):
     assert redis_client.get(metadata_key(PATH)) is not None
 
 
+def test_folder_delete_invalidates_everything_inside(cached, provider, redis_client):
+    provider.upload("/docs/sub/notes.txt", b"notes")
+    provider.upload("/other.pdf", b"other")
+    for path in (PATH, "/docs/sub/notes.txt", "/other.pdf"):
+        cached.get_metadata(path)
+
+    cached.delete("/docs")
+
+    assert redis_client.get(metadata_key(PATH)) is None
+    assert redis_client.get(metadata_key("/docs/sub/notes.txt")) is None
+    # Files outside the folder keep their entries.
+    assert redis_client.get(metadata_key("/other.pdf")) is not None
+
+
+def test_folder_delete_does_not_touch_a_sibling_with_the_same_prefix(
+    cached, provider, redis_client
+):
+    provider.upload("/docs-old/report.pdf", b"old")
+    cached.get_metadata("/docs-old/report.pdf")
+
+    cached.delete("/docs")
+
+    assert redis_client.get(metadata_key("/docs-old/report.pdf")) is not None
+
+
 # --- Redis failure (fail open) ----------------------------------------------
 
 
@@ -276,6 +301,7 @@ def broken_redis():
     client.get.side_effect = RedisConnectionError("redis is down")
     client.set.side_effect = RedisConnectionError("redis is down")
     client.delete.side_effect = RedisConnectionError("redis is down")
+    client.scan_iter.side_effect = RedisConnectionError("redis is down")
 
     return client
 

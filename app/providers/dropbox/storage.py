@@ -306,28 +306,20 @@ class DropboxStorage:
         path: str,
     ) -> None:
         """
-            Delete a file from cloud storage.
+            Delete a file, or a folder with everything in it.
 
             Args:
-                path (str): The file to delete, e.g. "/docs/report.pdf".
+                path (str): The file or folder to delete, e.g. "/docs/report.pdf".
             Raises:
                 FileNotFoundError: If nothing exists at this path.
-                InvalidRequestError: If the path is a folder.
                 PermissionDeniedError: If the token can't delete this path.
+                ProviderError: If Dropbox fails. The outcome is then unknown,
+                    so the caller checks the path before retrying.
         """
-        # Dropbox deletes folders recursively, so check it is a file first
-        try:
-            metadata = self.client.files_get_metadata(path)
-        except RequestException as exc:
-            raise ProviderError(f"Dropbox could not inspect: {path}") from exc
-        except ApiError as exc:
-            raise translate_lookup_error(exc.error.get_path(), path) from exc
-        except DropboxException as exc:
-            raise translate_dropbox_exception(exc) from exc
-
-        if not isinstance(metadata, FileMetadata):
-            raise InvalidRequestError(f"Only files can be deleted: {path}")
-
+        # The shared contract deletes folders too, and Dropbox's files_delete_v2
+        # already removes a folder with everything in it. So this is one call,
+        # whether the path is a file or a folder. The root can't reach here:
+        # validate_path rejects "/" for every operation except list.
         try:
             self.client.files_delete_v2(path)
         except RequestException as exc:

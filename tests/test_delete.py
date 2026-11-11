@@ -93,6 +93,51 @@ def test_delete_without_leading_slash_uses_canonical_path(storage):
     assert "/docs/report.pdf" not in storage.files
 
 
+def test_delete_folder_removes_everything_inside(storage):
+    storage.upload("/docs/report.pdf", b"hello")
+    storage.upload("/docs/sub/notes.txt", b"notes")
+    storage.upload("/other.pdf", b"other")
+
+    response = delete_file("/docs")
+
+    assert response.status_code == 204
+    assert sorted(storage.files) == ["/other.pdf"]
+    assert "/docs" not in storage.folders
+    assert "/docs/sub" not in storage.folders
+
+
+def test_deleted_folder_returns_404_on_metadata_and_list(storage):
+    storage.upload("/docs/report.pdf", b"hello")
+    delete_file("/docs")
+
+    metadata = client.get("/files/metadata", params={"path": "/docs"})
+    listing = client.get("/files", params={"path": "/docs"})
+
+    assert metadata.status_code == 404
+    assert listing.status_code == 404
+
+
+def test_delete_folder_twice(storage):
+    storage.create_folder("/docs")
+
+    first = delete_file("/docs")
+    second = delete_file("/docs")
+
+    assert first.status_code == 204
+    assert second.status_code == 404
+    assert second.json()["error"]["code"] == "not_found"
+
+
+def test_delete_root_is_rejected(storage):
+    storage.upload("/report.pdf", b"hello")
+
+    response = delete_file("/")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "/report.pdf" in storage.files
+
+
 class FailingStorage(FakeDocumentStorage):
 
     def __init__(self, error):

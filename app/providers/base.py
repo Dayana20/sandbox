@@ -85,8 +85,7 @@ class DocumentStorage(Protocol):
         path: str,
     ) -> None:
         """
-            Delete the file at path. Changes state.
-
-            Only files are deleted, never folders.
+            Delete the file at path, or the folder at path with everything
+            in it. Changes state.
         """
         ...

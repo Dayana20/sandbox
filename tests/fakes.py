@@ -184,6 +184,16 @@ class FakeDocumentStorage:
         path: str,
     ) -> None:
 
+        if path in self.folders:
+            # A folder is deleted with everything under it, like Dropbox does.
+            prefix = f"{path}/"
+            for file_path in [p for p in self.files if p.startswith(prefix)]:
+                del self.files[file_path]
+            for folder_path in [p for p in self.folders if p.startswith(prefix)]:
+                del self.folders[folder_path]
+            del self.folders[path]
+            return
+
         if path not in self.files:
             raise FileNotFoundError(
                 f"File not found: {path}"

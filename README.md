@@ -19,7 +19,7 @@ Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_d
 | `list_files(path)` | List a folder's direct children | folder path | `list[FileResource]` | No | Every provider page is included and results are sorted by path |
 | `download(path)` | Get a file's contents | file path | `bytes` | No | Bytes are exactly what was uploaded |
 | `move(path, new_path)` | Rename or move a file | old path, new path | `FileResource` | Yes | The `id` stays the same; nothing at `new_path` is overwritten |
-| `delete(path)` | Delete a file | file path | `None` | Yes | Only files are deleted, never folders |
+| `delete(path)` | Delete a file or a folder | file or folder path | `None` | Yes | A folder is deleted with everything in it |
 
 Callers may send paths with or without a leading slash. The service validates
 and returns the canonical absolute form, e.g. both `docs/report.pdf` and
@@ -253,10 +253,11 @@ Errors:
 
 | Status | Code | When | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, `path` is a folder, or file over 150 MB | No, fix the input |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, or file over 150 MB | No, fix the input |
 | 403 | `permission_denied` | Token can't write this file | No |
 | 404 | `not_found` | Nothing exists at `path` | No, create it with `POST /files` |
 | 409 | `conflict` | The file changed or was deleted during the replace | Yes, after reading the file again to decide whether your change still applies |
+| 422 | `invalid_operation` | `path` is a folder | No, replace works on files only |
 | 502 | `provider_error` | Dropbox failed | Yes, but first check `GET /files/metadata`: the replace may have gone through |
 
 Try it:
@@ -265,7 +266,7 @@ Try it:
 curl -i -X PUT http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs/report.pdf"
 ```
 
-How it works: the route checks the input like upload does and calls `storage.replace()`. `DropboxStorage.replace()` reads the file's current revision with `files_get_metadata` (a missing file is `404`, a folder `400`), then calls `files_upload` with `WriteMode.update(rev)`, `autorename=False` and `strict_conflict=True`. Dropbox only writes if the file is still at that revision. Otherwise it returns a conflict, which becomes `409`. Without `autorename=False` Dropbox would save a "conflicted copy", and without `strict_conflict=True` it would recreate a file deleted in between. Cost: 2 Dropbox calls per replace. With `REDIS_URL` set, the path's cached metadata is removed afterwards.
+How it works: the route checks the input like upload does and calls `storage.replace()`. `DropboxStorage.replace()` reads the file's current revision with `files_get_metadata` (a missing file is `404`, a folder `422`), then calls `files_upload` with `WriteMode.update(rev)`, `autorename=False` and `strict_conflict=True`. Dropbox only writes if the file is still at that revision. Otherwise it returns a conflict, which becomes `409`. Without `autorename=False` Dropbox would save a "conflicted copy", and without `strict_conflict=True` it would recreate a file deleted in between. Cost: 2 Dropbox calls per replace. With `REDIS_URL` set, the path's cached metadata is removed afterwards.
 
 The revision check only covers the moment between our two Dropbox calls. The caller doesn't send a revision, so two callers who both read the file and then replace it one after the other both succeed, and the second one wins. Letting callers send the revision they read is a possible follow-up.
 
@@ -560,20 +561,20 @@ curl -i -X PATCH "http://127.0.0.1:8000/files?path=/docs/report.pdf" \
 
 How it works: the route checks both paths with `validate_path` and rejects a `new_path` that matches `path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `path`. Destination errors (`to`) are translated against `new_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
 
-## Delete a file
+## Delete a file or folder
 
 `DELETE /files?path=...` returns `204 No Content` with no body.
 
-Deletes the file at `path` from the Dropbox app folder. Folders are refused with `400`, because Dropbox would delete everything inside them. The first delete of a path returns `204`. Deleting the same path again returns `404`, because nothing is there any more.
+Deletes the file at `path`, or the folder at `path` with everything in it, as the shared contract requires. The first delete of a path returns `204`. Deleting the same path again returns `404`, because nothing is there any more. The root (`/`) can't be deleted: it is refused with `400` before Dropbox is called.
 
 Errors:
 
-| Status | Code | When |
-| --- | --- | --- |
-| 400 | `invalid_request` | Missing or bad `path`, or `path` is a folder |
-| 403 | `permission_denied` | Token can't delete this path |
-| 404 | `not_found` | Nothing exists at `path` |
-| 502 | `provider_error` | Dropbox failed |
+| Status | Code | When | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`, or `path` is the root | No, fix the input |
+| 403 | `permission_denied` | Token can't delete this path | No |
+| 404 | `not_found` | Nothing exists at `path` | No |
+| 502 | `provider_error` | Dropbox failed, including a folder Dropbox refuses to delete because it holds too many files | Yes, but first check `GET /files/metadata` or list the folder: part or all of it may already be gone |
 
 Try it:
 
@@ -581,7 +582,7 @@ Try it:
 curl -i -X DELETE "http://127.0.0.1:8000/files?path=/docs/report.pdf"
 ```
 
-How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
+How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` calls Dropbox `files_delete_v2` once, for a file or a folder alike: Dropbox removes a folder with everything inside it, so there is no metadata check or listing first. Cost: 1 Dropbox call, whatever the folder size. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`. With `REDIS_URL` set, the cached metadata for `path` and for everything below it is removed afterwards.
 
 ## Metadata caching
 
@@ -688,12 +689,12 @@ Without a token they are skipped. They use unique test-owned paths and delete wh
 | `test_replace.py` | `PUT /files` with the fake storage: success keeps the id and changes the bytes, missing file returns 404 and creates nothing, missing or bad input, file too large, storage errors |
 | `test_dropbox_replace.py` | `DropboxStorage.replace` with a mocked Dropbox client: reads the rev then uploads with `WriteMode.update(rev)`, `autorename=False` and `strict_conflict=True`; missing file and folder never upload; stale rev is a 409 conflict; error mapping |
 | `integration/test_replace_dropbox.py` | Replaces a real file and checks the id and bytes; a missing path returns 404 and is not created; real Dropbox refuses a write with a stale rev and keeps the other change; a rev for a deleted file does not recreate it |
-| `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
-| `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: correct call and error mapping |
+| `test_delete.py` | `DELETE /files` with the fake storage: file and folder delete, deleted file returns 404, repeated delete, missing file, bad path, root refused, Dropbox errors |
+| `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: one call for a file or a folder, and error mapping |
 | `test_update.py` | `PATCH /files` with the fake storage: success, content kept and old path gone, case-only rename refused, repeated move, missing file, 409 without overwrite, invalid input never reaches storage, Dropbox errors |
 | `test_dropbox_update.py` | `DropboxStorage.move` with a mocked Dropbox client: correct call, folder refused, error mapping for source and destination |
 | `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
-| `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
+| `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and deletes a real folder with nested files |
 
 ## Lint and type check
 

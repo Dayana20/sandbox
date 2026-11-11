@@ -136,11 +136,24 @@ class CachedDocumentStorage:
         self,
         path: str,
     ) -> None:
-        self._mutate(
-            [path],
-            lambda: self.storage.delete(path),
-            not_found_paths=[path],
-        )
+        # path may be a folder, and deleting a folder removes everything in
+        # it. So whenever the entry for path is dropped, the entries below it
+        # are dropped too.
+        try:
+            self._mutate(
+                [path],
+                lambda: self.storage.delete(path),
+                not_found_paths=[path],
+            )
+        except StorageError as exc:
+            if isinstance(exc, (ProviderError, FileNotFoundError)):
+                self._invalidate_children(path)
+            raise
+        except Exception:
+            self._invalidate_children(path)
+            raise
+
+        self._invalidate_children(path)
 
     def _mutate(
         self,
@@ -228,6 +241,26 @@ class CachedDocumentStorage:
         logger.info(
             "cache_invalidate keys=%s", ",".join(key_id(path) for path in paths)
         )
+
+    def _invalidate_children(self, path: str) -> None:
+        """Drop the cached entries of everything below a folder path."""
+        # Escape glob characters so a folder named "a*" only matches itself.
+        prefix = metadata_key(path) + "/"
+        for char in "\\*?[]":
+            prefix = prefix.replace(char, "\\" + char)
+
+        try:
+            keys = list(self.redis.scan_iter(match=prefix + "*"))
+            if keys:
+                self.redis.delete(*keys)
+        except Exception as exc:
+            # Never let the cache hide the delete's own result or error. Old
+            # entries may then survive until their TTL runs out.
+            self._log_error("invalidate", exc)
+            return
+
+        if keys:
+            logger.info("cache_invalidate children=%s of=%s", len(keys), key_id(path))
 
     def _log_error(self, operation: str, exc: Exception) -> None:
         # Only the exception type. The message can contain connection details.
