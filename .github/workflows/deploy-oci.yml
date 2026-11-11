@@ -2,7 +2,9 @@
 name: Deploy Document Storage API to OCI
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - "deploy-oci-*"
 
 permissions:
   contents: read
@@ -14,7 +16,6 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to Oracle Cloud
-    if: github.ref == 'refs/heads/hw2-milestone3'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
