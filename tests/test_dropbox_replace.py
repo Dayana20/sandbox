@@ -51,6 +51,7 @@ def test_dropbox_replace_success():
         path_display="/docs/report.pdf",
         size=12,
         server_modified=datetime(2026, 11, 3, 14, 30),
+        rev="016bcdef0123",
     )
     storage = DropboxStorage(client=mock_client)
 
@@ -67,6 +68,8 @@ def test_dropbox_replace_success():
     )
     assert result.id == "id:abc"
     assert result.size == 12
+    assert result.etag == "016bcdef0123"
+    assert result.modified_at == "2026-11-03T14:30:00Z"
 
 
 def test_dropbox_replace_missing_file_never_uploads():
