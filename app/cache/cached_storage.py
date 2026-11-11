@@ -41,12 +41,12 @@ class CachedDocumentStorage:
         store the answer for ttl_seconds. Only successful metadata is cached.
         Errors and file bytes are never cached.
 
-        upload, move and delete go to the wrapped storage first, then the
+        upload, replace, move and delete go to the wrapped storage first, then the
         cached entries for the paths they touched are removed. That also
         happens when the provider call raises something that leaves the outcome
         unknown (ProviderError or an unexpected exception), because the remote
         file may have changed before the error reached us. When delete or move
-        gets not_found, the entry for the missing source path is removed too,
+        (or replace) gets not_found, the entry for the missing path is removed too,
         because not_found proves the cached metadata is stale. It does not
         happen when the provider cleanly refuses the call (bad input,
         conflict, permission), because nothing changed. The original error is
@@ -75,6 +75,17 @@ class CachedDocumentStorage:
         return self._mutate(
             [path],
             lambda: self.storage.upload(path, content),
+        )
+
+    def replace(
+        self,
+        path: str,
+        content: bytes,
+    ) -> FileResource:
+        return self._mutate(
+            [path],
+            lambda: self.storage.replace(path, content),
+            not_found_paths=[path],
         )
 
     def get_metadata(
@@ -127,11 +138,24 @@ class CachedDocumentStorage:
         self,
         path: str,
     ) -> None:
-        self._mutate(
-            [path],
-            lambda: self.storage.delete(path),
-            not_found_paths=[path],
-        )
+        # path may be a folder, and deleting a folder removes everything in
+        # it. So whenever the entry for path is dropped, the entries below it
+        # are dropped too.
+        try:
+            self._mutate(
+                [path],
+                lambda: self.storage.delete(path),
+                not_found_paths=[path],
+            )
+        except StorageError as exc:
+            if isinstance(exc, (ProviderError, FileNotFoundError)):
+                self._invalidate_children(path)
+            raise
+        except Exception:
+            self._invalidate_children(path)
+            raise
+
+        self._invalidate_children(path)
 
     def check_health(
         self,
@@ -228,6 +252,26 @@ class CachedDocumentStorage:
         logger.info(
             "cache_invalidate keys=%s", ",".join(key_id(path) for path in paths)
         )
+
+    def _invalidate_children(self, path: str) -> None:
+        """Drop the cached entries of everything below a folder path."""
+        # Escape glob characters so a folder named "a*" only matches itself.
+        prefix = metadata_key(path) + "/"
+        for char in "\\*?[]":
+            prefix = prefix.replace(char, "\\" + char)
+
+        try:
+            keys = list(self.redis.scan_iter(match=prefix + "*"))
+            if keys:
+                self.redis.delete(*keys)
+        except Exception as exc:
+            # Never let the cache hide the delete's own result or error. Old
+            # entries may then survive until their TTL runs out.
+            self._log_error("invalidate", exc)
+            return
+
+        if keys:
+            logger.info("cache_invalidate children=%s of=%s", len(keys), key_id(path))
 
     def _log_error(self, operation: str, exc: Exception) -> None:
         # Only the exception type. The message can contain connection details.

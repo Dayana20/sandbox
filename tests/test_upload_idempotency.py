@@ -565,7 +565,7 @@ def test_missing_file_and_oversized_file_are_rejected_locally(
     too_big = post(client, content=b"x" * 11)
 
     assert no_file.status_code == 400
-    assert too_big.status_code == 400
+    assert too_big.status_code == 413
     assert storage.upload_calls == 0
     assert redis_client.keys("*") == []
 

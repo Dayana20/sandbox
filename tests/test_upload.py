@@ -93,7 +93,9 @@ def test_upload_too_large(storage, monkeypatch):
 
     response = post_file("/big.txt", b"x" * 11)
 
-    assert response.status_code == 400
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "file_too_large"
+    assert storage.files == {}
 
 
 def test_upload_same_path_twice(storage):
@@ -131,7 +133,7 @@ def test_upload_storage_errors(error, status, code):
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
 
-# Set file.size above a monkeypatched small MAX_UPLOAD_BYTES; assert the route raises InvalidRequestError and file.file.read was never called.
+# Set file.size above a monkeypatched small MAX_UPLOAD_BYTES; assert the route raises FileTooLargeError and file.file.read was never called.
 def test_upload_file_size_exceeds_max(monkeypatch):
     class FakeFile:
         def __init__(self):
@@ -151,10 +153,10 @@ def test_upload_file_size_exceeds_max(monkeypatch):
     monkeypatch.setattr(upload, "MAX_UPLOAD_BYTES", 10)
     fake_file = FakeUploadFile()
 
-    with pytest.raises(upload.InvalidRequestError) as exc_info:
+    with pytest.raises(upload.FileTooLargeError) as exc_info:
         upload.upload_file(file=fake_file, path="/report.pdf", storage=FakeDocumentStorage())
 
-    assert str(exc_info.value) == "File is larger than 150 MB"
+    assert str(exc_info.value) == "File is larger than 150 MiB"
     assert not fake_file.file.read_called
 
 
@@ -176,8 +178,8 @@ def test_upload_file_size_unknown_exceeds_max(monkeypatch):
     monkeypatch.setattr(upload, "MAX_UPLOAD_BYTES", 10)
     fake_file = FakeUploadFile()
 
-    with pytest.raises(upload.InvalidRequestError) as exc_info:
+    with pytest.raises(upload.FileTooLargeError) as exc_info:
         upload.upload_file(file=fake_file, path="/report.pdf", storage=FakeDocumentStorage())
 
-    assert str(exc_info.value) == "File is larger than 150 MB"
+    assert str(exc_info.value) == "File is larger than 150 MiB"
     assert fake_file.file.read_called_with == 11  # MAX_UPLOAD_BYTES + 1

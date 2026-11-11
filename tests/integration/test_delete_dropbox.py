@@ -45,21 +45,27 @@ def test_delete_from_real_dropbox():
             pass
 
 
-def test_delete_refuses_real_folder():
+def test_delete_real_folder_with_everything_inside():
     dbx = create_dropbox_client()
     client = TestClient(app)
-    path = f"/integration-tests/folder-{uuid.uuid4().hex}"
+    folder = f"/integration-tests/folder-{uuid.uuid4().hex}"
 
-    dbx.files_create_folder_v2(path)
+    dbx.files_upload(b"one", f"{folder}/a.txt")
+    dbx.files_upload(b"two", f"{folder}/sub/b.txt")
 
     try:
-        response = client.delete("/files", params={"path": path})
-        assert response.status_code == 400
+        response = client.delete("/files", params={"path": folder})
+        assert response.status_code == 204
 
-        # the folder should still be there
-        dbx.files_get_metadata(path)
+        # the folder and the files inside it are gone from Dropbox
+        for path in (folder, f"{folder}/a.txt", f"{folder}/sub/b.txt"):
+            with pytest.raises(dropbox.exceptions.ApiError):
+                dbx.files_get_metadata(path)
+
+        again = client.delete("/files", params={"path": folder})
+        assert again.status_code == 404
     finally:
         try:
-            dbx.files_delete_v2(path)
+            dbx.files_delete_v2(folder)
         except Exception:
             pass

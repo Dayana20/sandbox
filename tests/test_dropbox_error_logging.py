@@ -5,7 +5,7 @@ import pytest
 from dropbox.exceptions import ApiError, AuthError, InternalServerError
 from dropbox.files import FolderMetadata, GetMetadataError, LookupError, UploadError, UploadWriteFailed, WriteError, WriteConflictError
 
-from app.errors import FileConflictError, FileNotFoundError, InvalidRequestError, PermissionDeniedError, ProviderError
+from app.errors import FileConflictError, FileNotFoundError, InvalidOperationError, PermissionDeniedError, ProviderError
 from app.providers.dropbox.storage import DropboxStorage
 
 
@@ -105,8 +105,10 @@ def test_our_own_refusal_is_not_logged_as_dropbox_error(caplog):
     client.files_get_metadata.return_value = Mock(spec=FolderMetadata)
     storage = DropboxStorage(client)
 
-    with caplog.at_level(logging.WARNING, logger=LOGGER), pytest.raises(InvalidRequestError):
-        storage.delete("/docs")
+    # Delete now accepts folders, so use replace, which still refuses them
+    # itself before writing anything.
+    with caplog.at_level(logging.WARNING, logger=LOGGER), pytest.raises(InvalidOperationError):
+        storage.replace("/docs", b"x")
 
     assert dropbox_records(caplog) == []
 

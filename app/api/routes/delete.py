@@ -18,7 +18,7 @@ def delete_file(
     storage: DocumentStorage = Depends(get_document_storage),
 ) -> None:
     '''
-    Delete a file from cloud storage.
+    Delete a file, or a folder with everything in it.
     Returns 404 if nothing exists at the path, including on a repeated delete.
     '''
     path = validate_path(path)

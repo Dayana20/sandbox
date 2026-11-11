@@ -6,7 +6,8 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 
 **Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [DESIGN.md](DESIGN.md) (HW2: adopting the shared Document Storage API) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built. `GET /health/storage` checks whether the Dropbox connection is up using the lightweight `users_get_current_account()` call.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PUT /files` (replace),`PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built. `GET /health/storage` checks whether the Dropbox connection is up using the lightweight `users_get_current_account()` call.
+
 
 ## Base
 
@@ -19,7 +20,7 @@ Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_d
 | `list_files(path)` | List a folder's direct children | folder path | `list[FileResource]` | No | Every provider page is included and results are sorted by path |
 | `download(path)` | Get a file's contents | file path | `bytes` | No | Bytes are exactly what was uploaded |
 | `move(from_path, to_path)` | Rename or move a file | old path, new path | `FileInfo` | Yes | The `id` stays the same; nothing at `to_path` is overwritten |
-| `delete(path)` | Delete a file | file path | `None` | Yes | Only files are deleted, never folders |
+| `delete(path)` | Delete a file or a folder | file or folder path | `None` | Yes | A folder is deleted with everything in it |
 
 Callers may send paths with or without a leading slash. The service validates
 and returns the canonical absolute form, e.g. both `docs/report.pdf` and
@@ -43,10 +44,11 @@ Every failed request returns the same JSON shape, whichever endpoint it came fro
 
 | Status | Code | Raised as | When it happens | Retry? |
 | --- | --- | --- | --- | --- |
-| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
+| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, or Dropbox refuses the name | No. Fix the request first |
 | 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
 | 404 | `not_found` | `FileNotFoundError` | Nothing exists at the requested path (for Move, `from_path`), including a repeated delete or move | No |
 | 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
+| 413 | `file_too_large` | `FileTooLargeError` | An upload or replace is larger than 150 MiB (157,286,400 bytes), the most Dropbox's `files_upload` accepts in one call | No. Send a smaller file |
 | 422 | `invalid_operation` | `InvalidOperationError` | A valid resource cannot be used for the requested operation, such as listing a file as a folder | No. Use a folder path |
 | 409 | `idempotency_conflict` | `IdempotencyConflictError` | An upload's `Idempotency-Key` was already used for a different request (different `path` or bytes) | No. Use a new key for a different upload |
 | 409 | `idempotency_in_progress` | `IdempotencyInProgressError` | The same request with this key is still running, or was cut off. It was not repeated | Yes, later, with the same key |
@@ -124,6 +126,7 @@ def read_metadata(
 | Action | Call |
 | --- | --- |
 | Create | `storage.upload(path, content)` |
+| Replace contents | `storage.replace(path, content)` |
 | Read metadata | `storage.get_metadata(path)` |
 | Read bytes | `storage.download(path)` |
 | Update path | `storage.move(from_path, to_path)` |
@@ -222,9 +225,10 @@ Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing `file` or `path`, bad path, file over 150 MB, or an empty or over-long `Idempotency-Key` |
+| 400 | `invalid_request` | Missing `file` or `path`, bad path, or an empty or over-long `Idempotency-Key` |
 | 403 | `permission_denied` | Token can't write to Dropbox |
 | 409 | `conflict` | A file already exists at `path` |
+| 413 | `file_too_large` | The file is over 150 MiB |
 | 409 | `idempotency_conflict`, `idempotency_in_progress`, `idempotency_outcome_unknown` | Only with an `Idempotency-Key`. See [Upload idempotency](#upload-idempotency) |
 | 502 | `provider_error` | Dropbox failed |
 | 503 | `idempotency_unavailable` | Only with an `Idempotency-Key`: Redis can't be used, so nothing was uploaded |
@@ -236,6 +240,39 @@ curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs
 ```
 
 How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so no Dropbox SDK object escapes the adapter. The token comes from `.env`, which is not committed.
+
+## Replace a file
+
+`PUT /files` (form data) returns `200 OK` and the file's new metadata.
+
+Replaces the contents of a file that already exists. The file keeps its `id` and path. Replace never creates a file: if nothing is at `path` you get `404` and nothing is written. Use `POST /files` to create. If someone else changes or deletes the file while the replace is running, nothing is written and you get `409`, so their change is never silently lost.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `file` | yes | The new contents |
+| `path` | yes | The file to replace, e.g. `/docs/report.pdf` |
+
+Errors:
+
+| Status | Code | When | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | Missing `file` or `path`, or bad path | No, fix the input |
+| 413 | `file_too_large` | The file is over 150 MiB | No, send a smaller file |
+| 403 | `permission_denied` | Token can't write this file | No |
+| 404 | `not_found` | Nothing exists at `path` | No, create it with `POST /files` |
+| 409 | `conflict` | The file changed or was deleted during the replace | Yes, after reading the file again to decide whether your change still applies |
+| 422 | `invalid_operation` | `path` is a folder | No, replace works on files only |
+| 502 | `provider_error` | Dropbox failed | Yes, but first check `GET /files/metadata`: the replace may have gone through |
+
+Try it:
+
+```bash
+curl -i -X PUT http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs/report.pdf"
+```
+
+How it works: the route checks the input like upload does and calls `storage.replace()`. `DropboxStorage.replace()` reads the file's current revision with `files_get_metadata` (a missing file is `404`, a folder `422`), then calls `files_upload` with `WriteMode.update(rev)`, `autorename=False` and `strict_conflict=True`. Dropbox only writes if the file is still at that revision. Otherwise it returns a conflict, which becomes `409`. Without `autorename=False` Dropbox would save a "conflicted copy", and without `strict_conflict=True` it would recreate a file deleted in between. Cost: 2 Dropbox calls per replace. With `REDIS_URL` set, the path's cached metadata is removed afterwards.
+
+The revision check only covers the moment between our two Dropbox calls. The caller doesn't send a revision, so two callers who both read the file and then replace it one after the other both succeed, and the second one wins. Letting callers send the revision they read is a possible follow-up.
 
 ## Upload idempotency
 
@@ -528,20 +565,20 @@ curl -i -X PATCH "http://127.0.0.1:8000/files?from_path=/docs/report.pdf" \
 
 How it works: the route checks both paths with `validate_path` and rejects a `to_path` that matches `from_path` ignoring case, without calling Dropbox. `DropboxStorage.move()` checks `from_path` is a file with `files_get_metadata`, then calls `files_move_v2` with `autorename=False`. Source errors (`from_lookup`, `from_write`) are translated against `from_path`. Destination errors (`to`) are translated against `to_path`, so a conflict message names the destination. Any other relocation error becomes `provider_error`. Cost: 2 Dropbox calls per move. Dropbox moves the file on its side, so the service never downloads or re-uploads the bytes, whatever the file size.
 
-## Delete a file
+## Delete a file or folder
 
 `DELETE /files?path=...` returns `204 No Content` with no body.
 
-Deletes the file at `path` from the Dropbox app folder. Folders are refused with `400`, because Dropbox would delete everything inside them. The first delete of a path returns `204`. Deleting the same path again returns `404`, because nothing is there any more.
+Deletes the file at `path`, or the folder at `path` with everything in it, as the shared contract requires. The first delete of a path returns `204`. Deleting the same path again returns `404`, because nothing is there any more. The root (`/`) can't be deleted: it is refused with `400` before Dropbox is called.
 
 Errors:
 
-| Status | Code | When |
-| --- | --- | --- |
-| 400 | `invalid_request` | Missing or bad `path`, or `path` is a folder |
-| 403 | `permission_denied` | Token can't delete this path |
-| 404 | `not_found` | Nothing exists at `path` |
-| 502 | `provider_error` | Dropbox failed |
+| Status | Code | When | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | Missing or bad `path`, or `path` is the root | No, fix the input |
+| 403 | `permission_denied` | Token can't delete this path | No |
+| 404 | `not_found` | Nothing exists at `path` | No |
+| 502 | `provider_error` | Dropbox failed, including a folder Dropbox refuses to delete because it holds too many files | Yes, but first check `GET /files/metadata` or list the folder: part or all of it may already be gone |
 
 Try it:
 
@@ -549,7 +586,7 @@ Try it:
 curl -i -X DELETE "http://127.0.0.1:8000/files?path=/docs/report.pdf"
 ```
 
-How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` checks the path is a file with `files_get_metadata`, then calls Dropbox `files_delete_v2`. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`.
+How it works: the route checks `path` with `validate_path` and calls `storage.delete()`. `DropboxStorage.delete()` calls Dropbox `files_delete_v2` once, for a file or a folder alike: Dropbox removes a folder with everything inside it, so there is no metadata check or listing first. Cost: 1 Dropbox call, whatever the folder size. Lookup failures go through `translate_lookup_error`, write failures through `translate_write_error`, and anything else becomes `provider_error`. With `REDIS_URL` set, the cached metadata for `path` and for everything below it is removed afterwards.
 
 ## Metadata caching
 
@@ -573,11 +610,11 @@ FastAPI route -> DocumentStorage -> CachedDocumentStorage -+-> Redis
 How it behaves:
 
 - **Read:** Redis first. On a hit the cached `FileResource` is returned and Dropbox is not called. On a miss Dropbox is called and the result is stored with the TTL.
-- **Upload, move, delete:** the call goes to Dropbox first. Afterwards the entries for the paths it touched are deleted: the path for upload and delete, both old and new path for move.
+- **Upload, replace, move, delete:** the call goes to Dropbox first. Afterwards the entries for the paths it touched are deleted: the path for upload, replace and delete, both old and new path for move.
 - **When a change fails:** it depends on whether we know Dropbox left the file alone.
   - A request refused before it reaches Dropbox (bad path, rejected by the route) never touches the cache.
   - Dropbox cleanly refusing (`invalid_request`, `conflict`, `permission_denied`) means nothing changed, so the cache stays.
-  - If a delete or move reaches Dropbox and Dropbox confirms that the source does not exist (`not_found`), the cached metadata for that source path is invalidated before the `not_found` error is returned. The cached entry was stale. For a move only the source path is dropped, because a missing destination is reported as a conflict or `provider_error`, never as `not_found`. An upload that gets `not_found` leaves the cache alone, because that says nothing about the cached file.
+  - If a delete, replace or move reaches Dropbox and Dropbox confirms that the source does not exist (`not_found`), the cached metadata for that source path is invalidated before the `not_found` error is returned. The cached entry was stale. For a move only the source path is dropped, because a missing destination is reported as a conflict or `provider_error`, never as `not_found`. An upload that gets `not_found` leaves the cache alone, because that says nothing about the cached file.
   - A `provider_error` or any unexpected exception means Dropbox may have applied the change before the failure reached us. The entries are deleted anyway and the original error is re-raised unchanged.
   - If Redis is down during that delete, the Dropbox error still wins and `cache_error` is logged.
 - **Bad cache data:** a value in Redis that is not valid JSON, does not fit `FileResource`, or cannot be decoded is treated as a miss. `cache_error` is logged with the exception type only, never the stored contents. Dropbox is called, the fresh result is returned, and the bad value is overwritten with valid metadata. The request does not fail. Existing entries from the earlier schema remain readable: missing `etag` and `type` become `null`, and a naive legacy `modified_at` is normalized to UTC `Z`, so a new cache namespace was not needed.
@@ -588,7 +625,7 @@ How it behaves:
 **What our application guarantees**
 
 - For changes made outside this service (the Dropbox website, another app), a metadata read is out of date by at most `METADATA_CACHE_TTL_SECONDS`, apart from the cases listed under permitted staleness.
-- After an upload, move or delete made through this service, the next read of those paths reaches Dropbox. This includes calls that fail with an uncertain outcome (`provider_error`) and a delete or move whose source Dropbox reports as `not_found`, but not calls Dropbox cleanly refuses for other reasons.
+- After an upload, replace, move or delete made through this service, the next read of those paths reaches Dropbox. This includes calls that fail with an uncertain outcome (`provider_error`) and a delete, replace or move whose source Dropbox reports as `not_found`, but not calls Dropbox cleanly refuses for other reasons.
 - The same file read or changed with or without the leading slash, or with different letter case, uses the same cache entry.
 - Redis problems never make a request fail or change its result.
 
@@ -636,7 +673,7 @@ Without a token they are skipped. They use unique test-owned paths and delete wh
 | `test_health.py` | `GET /health` returns 200 and `{"status": "ok"}` |
 | `test_dependencies.py` | `get_document_storage()` returns a `DropboxStorage` holding the client it was given, creates the client only once, and retries if credentials were missing. Dropbox is not called. |
 | `test_dropbox_client.py` | `create_dropbox_client()` uses the refresh token when set, falls back to an access token, and errors clearly when credentials are missing |
-| `test_cached_storage.py` | `CachedDocumentStorage` with `fakeredis`: miss then hit with the provider called once, errors and downloads not cached, TTL, invalidation on upload, move and delete (including uncertain provider failures, invalidation of the stale source entry on `not_found`, and no invalidation on other clean refusals), bad cached values treated as a miss, letter-case-insensitive keys, Redis down still works, and the dependency wiring |
+| `test_cached_storage.py` | `CachedDocumentStorage` with `fakeredis`: miss then hit with the provider called once, errors and downloads not cached, TTL, invalidation on upload, replace, move and delete (including uncertain provider failures, invalidation of the stale source entry on `not_found`, and no invalidation on other clean refusals), bad cached values treated as a miss, letter-case-insensitive keys, Redis down still works, and the dependency wiring |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
 | `test_list.py` | `GET /files` with fake storage: root, empty and missing folders, canonical paths, direct children, sorting, file/folder types and shared errors |
@@ -653,12 +690,15 @@ Without a token they are skipped. They use unique test-owned paths and delete wh
 | `test_upload_idempotency.py` | Upload with `Idempotency-Key`, using `fakeredis` and a counting fake provider: first request, replay with the provider called once, conflicting payload or path, overlapping requests (a blocked upload, no sleeps), a new service over the same Redis (restart), uncertain outcomes never retried, reservation ownership (a stale request cannot overwrite, mark uncertain or delete a newer reservation, and the owner check runs inside Redis), local rejections leaving no record, Dropbox's definitive errors releasing the key, Redis down or unset failing closed, TTL, no-key uploads unchanged, logs without the raw key or the file path, and the four `idempotency_*` errors using the shared error shape, `X-Request-ID` and `request_failed` log (never a 500, and a Redis outage is not logged as a Dropbox failure) |
 | `test_dropbox_upload.py` | `DropboxStorage.upload` with a mocked Dropbox client: correct call and error mapping |
 | `integration/test_upload_dropbox.py` | Uploads to real Dropbox, checks the file, then deletes it |
-| `test_delete.py` | `DELETE /files` with the fake storage: success, deleted file returns 404, repeated delete, missing file, bad path, Dropbox errors |
-| `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: correct call and error mapping |
+| `test_replace.py` | `PUT /files` with the fake storage: success keeps the id and changes the bytes, missing file returns 404 and creates nothing, missing or bad input, file too large, storage errors |
+| `test_dropbox_replace.py` | `DropboxStorage.replace` with a mocked Dropbox client: reads the rev then uploads with `WriteMode.update(rev)`, `autorename=False` and `strict_conflict=True`; missing file and folder never upload; stale rev is a 409 conflict; error mapping |
+| `integration/test_replace_dropbox.py` | Replaces a real file and checks the id and bytes; a missing path returns 404 and is not created; real Dropbox refuses a write with a stale rev and keeps the other change; a rev for a deleted file does not recreate it |
+| `test_delete.py` | `DELETE /files` with the fake storage: file and folder delete, deleted file returns 404, repeated delete, missing file, bad path, root refused, Dropbox errors |
+| `test_dropbox_delete.py` | `DropboxStorage.delete` with a mocked Dropbox client: one call for a file or a folder, and error mapping |
 | `test_update.py` | `PATCH /files` with the fake storage: success, content kept and old path gone, case-only rename refused, repeated move, missing file, 409 without overwrite, invalid input never reaches storage, Dropbox errors |
 | `test_dropbox_update.py` | `DropboxStorage.move` with a mocked Dropbox client: correct call, folder refused, error mapping for source and destination |
 | `integration/test_update_dropbox.py` | Moves a real file into a new subfolder, checks the id and bytes, checks a repeat returns 404 and a move onto an existing file returns 409 |
-| `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and checks a folder is refused |
+| `integration/test_delete_dropbox.py` | Deletes a real file from Dropbox, checks it is gone, checks a repeated delete returns 404, and deletes a real folder with nested files |
 
 ## Lint and type check
 
@@ -681,7 +721,7 @@ app/
 ├── dependencies.py         # get_document_storage(), get_idempotency_service()
 ├── errors.py
 ├── validation.py           # validate_path(), shared by every route
-├── api/routes/            # health, upload, read, download, update, delete
+├── api/routes/            # health, upload, replace, read, download, update, delete
 ├── cache/                  # CachedDocumentStorage, Redis client
 ├── idempotency/            # upload Idempotency-Key: service, redis_store, redis_client
 ├── models/file.py

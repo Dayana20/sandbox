@@ -27,6 +27,21 @@ class DocumentStorage(Protocol):
         """
         ...
 
+    def replace(
+        self,
+        path: str,
+        content: bytes,
+    ) -> FileResource:
+        """
+            Replace the contents of the existing file at path. Changes state.
+
+            Never creates a file: a missing path is FileNotFoundError.
+            If the file changes while it is being replaced, nothing is
+            written and FileConflictError is raised.
+            Returns the file's new metadata. The id does not change.
+        """
+        ...
+
     def get_metadata(
         self,
         path: str,
@@ -71,9 +86,8 @@ class DocumentStorage(Protocol):
         path: str,
     ) -> None:
         """
-            Delete the file at path. Changes state.
-
-            Only files are deleted, never folders.
+            Delete the file at path, or the folder at path with everything
+            in it. Changes state.
         """
         ...
 
