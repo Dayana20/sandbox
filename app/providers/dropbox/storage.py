@@ -364,6 +364,24 @@ class DropboxStorage:
             modified_at=None,
             type=resource_type,
         )
+    @logs_dropbox_errors
+    def check_health(
+        self,
+    ) -> None:
+        """
+            Raise an exception if the provider is unreachable or misconfigured.
+
+            Args:
+                None
+            Returns:
+                None
+        """
+        try:
+            self.client.users_get_current_account()
+        except Exception as exc:
+            raise ProviderUnavailableError(
+                "Dropbox could not be reached"
+            ) from exc
 
     def to_file_info(self, metadata: dropbox.files.FileMetadata) -> FileInfo:
             modified_at = metadata.server_modified.astimezone(timezone.utc).isoformat()

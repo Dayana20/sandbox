@@ -90,3 +90,13 @@ class DocumentStorage(Protocol):
             in it. Changes state.
         """
         ...
+
+    def check_health(
+        self,
+    ) -> None:
+        """
+            Raise an exception if the provider is unreachable or misconfigured.
+
+            This is a quick check to see if the provider is available.
+        """
+        ...

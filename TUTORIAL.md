@@ -46,6 +46,14 @@ HTTP/1.1 200 OK
 
 ![Health check returns 200](docs/images/01-health.png)
 
+The provider health route checks the Dropbox connection separately, using the lightweight `users_get_current_account()` call:
+
+```bash
+curl -i http://127.0.0.1:8000/health/storage
+```
+
+**Expected:** `200 OK` with `{"status":"ok"}` when Dropbox is reachable.
+
 Make two small files to work with:
 
 ```bash
