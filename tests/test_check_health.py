@@ -27,6 +27,16 @@ def test_check_health():
     app.dependency_overrides.clear()
 
 
+def test_provider_health_route():
+    app.dependency_overrides[get_document_storage] = fake_get_document_storage_success
+    response = client.get("/health/provider")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+    app.dependency_overrides.clear()
+
+
 def test_check_health_with_unavailable_storage():
     # Override the dependency to simulate an unavailable storage provider
     app.dependency_overrides[get_document_storage] = fake_get_document_storage_error
