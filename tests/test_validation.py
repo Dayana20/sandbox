@@ -84,6 +84,7 @@ def untouchable_storage():
 # bad path in the place that route reads it from.
 ROUTES = {
     "upload": lambda path: client.post("/files", data={"path": path}, files={"file": ("a.txt", b"hi")}),
+    "replace": lambda path: client.put("/files", data={"path": path}, files={"file": ("a.txt", b"hi")}),
     "metadata": lambda path: client.get("/files/metadata", params={"path": path}),
     "download": lambda path: client.get("/files/download", params={"path": path}),
     "move source": lambda path: client.patch("/files", params={"path": path}, json={"new_path": "/ok.txt"}),

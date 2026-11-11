@@ -17,6 +17,7 @@ ERROR_DESCRIPTIONS = {
     403: "`permission_denied`: Dropbox refused access",
     404: "`not_found`: nothing exists at the path",
     409: "`conflict`: a file already exists at the target path",
+    413: "`file_too_large`: the file is larger than 150 MiB",
     422: "`invalid_operation`: the path is valid but cannot be used for this operation",
     502: "`provider_error`: Dropbox failed or is unreachable",
     503: (

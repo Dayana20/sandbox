@@ -21,6 +21,10 @@ class FileConflictError(StorageError):
     pass
 
 
+class FileTooLargeError(StorageError):
+    """The upload is bigger than the service accepts."""
+
+
 class InvalidOperationError(StorageError):
     """Valid input that cannot be used for the requested operation."""
 

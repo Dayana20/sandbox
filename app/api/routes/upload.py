@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 
 from app.api.responses import error_responses
 from app.dependencies import get_document_storage, get_idempotency_service
-from app.errors import InvalidRequestError
+from app.errors import FileTooLargeError, InvalidRequestError
 from app.idempotency.service import (
     IdempotencyService,
     upload_fingerprint,
@@ -14,7 +14,8 @@ from app.models.file import FileResource
 from app.providers.base import DocumentStorage
 from app.validation import validate_path
 
-# Dropbox files_upload accepts up to 150 MB in one request
+# Dropbox files_upload accepts up to 150 MiB in one request. Above it the
+# shared contract returns 413 file_too_large.
 MAX_UPLOAD_BYTES = 150 * 1024 * 1024
 
 router = APIRouter(
@@ -26,7 +27,7 @@ router = APIRouter(
 @router.post(
     "",
     status_code=201,
-    responses=error_responses(400, 403, 409, 502, 503, idempotency=True),
+    responses=error_responses(400, 403, 409, 413, 502, 503, idempotency=True),
 )
 def upload_file(
     file: UploadFile | None = File(None),
@@ -55,11 +56,11 @@ def upload_file(
 
     # After validating the path, check file.size before reading
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
-        raise InvalidRequestError("File is larger than 150 MB")
+        raise FileTooLargeError("File is larger than 150 MiB")
 
     content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
-        raise InvalidRequestError("File is larger than 150 MB")
+        raise FileTooLargeError("File is larger than 150 MiB")
 
     if idempotency_key is None:
         return storage.upload(path, content)

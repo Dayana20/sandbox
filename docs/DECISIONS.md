@@ -21,7 +21,7 @@ Why the service behaves the way it does, for reviewers and future maintainers. E
 **How:** uploads use `WriteMode.add`, `autorename=False` and `strict_conflict=True`. Without `strict_conflict`, Dropbox quietly accepts an upload whose contents are identical to the existing file. Moves use `files_move_v2(autorename=False)`.
 
 **Cost:**
-- There's no "replace" operation. Updating a file's contents means `DELETE` then `POST`. Conditional updates (`PUT` with a revision) are the planned way to add safe replacing.
+- Replacing a file's contents is a separate operation, `PUT /files`, added for HW2. It only replaces a file that exists (`404` otherwise) and uses Dropbox's `WriteMode.update(rev)`, so a change made by someone else in between gets `409` instead of being overwritten. `tests/integration/test_replace_dropbox.py` checks against real Dropbox that a stale revision is refused.
 - Retries need care. If an upload times out after Dropbox has already saved the file, the caller gets `502`, and retrying the same upload then gets `409`. So the README tells callers to check whether the file is already there (`GET /files/metadata`) before retrying an upload, move or delete. This case isn't covered by a test yet (see the known gaps in `TESTING.md`).
 
 **Evidence:**
@@ -32,7 +32,7 @@ Why the service behaves the way it does, for reviewers and future maintainers. E
 - Dropbox's documentation for `strict_conflict`: it "forces a conflict even when the target path refers to a file with identical contents". Without it, a repeat upload of the same bytes would quietly return success.
 
 **What would make us revisit it:**
-- **Callers need to replace files.** We'd add a conditional update (`PUT` with the file's current revision) rather than switching uploads to overwrite: the update succeeds only if nobody changed the file since the caller read it, and a stale update still gets `409`.
+- **Callers need to replace files.** Done as `PUT /files` (see the README) instead of switching uploads to overwrite. It reads the revision itself, so it protects against a change between its two Dropbox calls. If callers need protection from the moment *they* read the file, the next step is letting them send that revision.
 - **Retries after timeouts become common.** If clients regularly hit the "502, then 409 on retry" case above, the fix is idempotency keys, so a retried upload returns the original result instead of a conflict.
 
 ## 2. Operations on a folder are refused with `400`

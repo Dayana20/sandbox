@@ -35,7 +35,7 @@ CASES = {
     # FastAPI's own routing errors
     "unknown endpoint": (lambda: client.get("/nope"), 404, "not_found"),
     "unknown file sub-path": (lambda: client.get("/files/nope"), 404, "not_found"),
-    "wrong method on /files": (lambda: client.put("/files"), 405, "method_not_allowed"),
+    "wrong method on /files": (lambda: client.options("/files"), 405, "method_not_allowed"),
     "wrong method on /health": (lambda: client.post("/health"), 405, "method_not_allowed"),
     "wrong method on metadata": (lambda: client.delete("/files/metadata"), 405, "method_not_allowed"),
     # Input FastAPI can't parse
@@ -107,10 +107,10 @@ def test_unknown_endpoint_names_the_request():
 
 
 def test_wrong_method_keeps_allow_header():
-    response = client.put("/files")
+    response = client.options("/files")
 
     # Our handler passes on the Allow header FastAPI sets. Known limitation:
-    # upload, move and delete are separate routers on /files, and FastAPI only
+    # upload, replace, move and delete are separate routers on /files, and FastAPI only
     # lists the methods of the first one it matches, so this says POST only.
     assert "POST" in response.headers["allow"]
 

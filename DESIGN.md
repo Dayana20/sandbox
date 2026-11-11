@@ -95,11 +95,11 @@ Concrete incompatibilities that affect Team 1:
 | Health (API) | `GET /health` | `GET /health` exists | None |
 | Health (provider) | `GET /health/provider` | Missing | New (issue #2, Dayana) |
 | Create | `POST /files` (form: `file`, `path`) | Same | Rename error codes only, if needed |
-| Replace | `PUT /files` (form: `file`, `path`) | Missing | Done for Milestone 2; review and merge |
+| Replace | `PUT /files` (form: `file`, `path`) | Implemented: 404 if missing, 409 on a stale revision, 422 for a folder | Done |
 | Download | TODO final route (open question 2) | `GET /files/download?path=` | None if this route is agreed |
 | Metadata | TODO final route (open question 2) | `GET /files/metadata?path=` | Likely none |
 | Move | `PATCH /files?path=` with `{"new_path"}` | Same route; returns `400` for a same-path move, case-only rename or folder | Change those cases to `422 invalid_operation` if #5 is accepted |
-| Delete | `DELETE /files?path=` | Files only, 400 for folders | Recursive folder delete |
+| Delete | `DELETE /files?path=` | Implemented: a file, or a folder with everything in it | Done |
 | List | `GET /files?path=` | Missing | New (Yashwanth, issue #3) |
 
 ### File info object
@@ -130,7 +130,7 @@ Observed Nov 4, 2026 against real Dropbox through the app (path shortened). Proc
 ### Information loss and limits
 
 - **Letter case:** Dropbox treats paths differing only in case as one file. Case-only rename returns 400 today.
-- **Upload limit:** README says 150 MB, the memo says 150 MiB. VERIFY against `app/api/routes/` and the Dropbox docs, then state the exact byte limit. The status above the limit is 400 today; 413 is open (open question 9).
+- **Upload limit:** 150 MiB (157,286,400 bytes; `MAX_UPLOAD_BYTES` in `app/api/routes/upload.py`), Dropbox's single-call `files_upload` limit. Create and replace above it return `413 file_too_large`, as the shared contract's `FileTooLargeError` defines.
 - `id` is a Dropbox id and is opaque to callers.
 
 ---
@@ -172,12 +172,12 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | No permission | `PermissionDeniedError` | 403 | `permission_denied` |
 | Dropbox failure or rate limit | `ProviderError` | 502 | `provider_error` (rename to `provider_failure`) |
 | Provider not configured | `StorageNotConfiguredError` | 503 | `provider_not_configured` |
-| File too large | `InvalidRequestError` today | 400 today, 413 open | `invalid_input` |
+| File too large | `FileTooLargeError` | 413 | `file_too_large` |
 
 ### Uncertain writes and retries
 
 - After a 502 or 503 on create, replace, move or delete, the outcome is unknown. The caller checks metadata before retrying.
-- **Folder delete:** Dropbox may fail after deleting part of a folder. The contract returns 502 and the caller lists the folder. Dropbox's `files_delete_v2` deletes a folder in one call. How it fails on a very large folder is not yet verified. Per Dropbox's docs it can refuse with a "too many files" error.
+- **Folder delete:** Team 1 deletes a folder with one Dropbox `files_delete_v2` call. Any Dropbox failure, including its "too many files" refusal for a very large folder, returns `502 provider_error`, and the caller lists the folder to see what is left. Whether Dropbox can stop partway through a large folder is not verified; the 502 tells the caller not to assume either outcome.
 - **Retries:** Team 1 never retries an operation automatically. After a 502 or 503 the write may already have happened, so a blind retry could create a duplicate, overwrite a newer change, or delete a file the caller has since re-created. The caller decides, after checking metadata.
 
 ### Configuration and credentials
@@ -225,7 +225,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | `PUT /files` replace | Annie, Shini | Open question 3 for the conflict status | Fake-storage tests, mocked Dropbox tests, one integration test |
 | `GET /files` list | Yashwanth | Path rule, open questions 4 and 5 | Same three levels, including a folder with more than one Dropbox page |
 | `GET /health/provider` | Dayana | None | Test with the fake and with bad credentials |
-| Recursive folder delete | Laya | Open question 6 | Integration test with a nested folder |
+| Recursive folder delete | Annie | Open question 6 | Done: `test_delete.py`, `test_dropbox_delete.py`, integration test with a nested folder |
 | Error code rename | Yashwanth | Code table decision | Updated `test_storage_foundation.py` |
 | Python 3.12 and package adoption | Annie | Package skeleton | CI green |
 
@@ -243,9 +243,9 @@ The coordinator announces the change in the document-storage Slack channel. Per 
 | --- | --- | --- |
 | Create never overwrites | `test_upload.py`; `integration/test_upload_dropbox.py` | Fake, mocked Dropbox, live Dropbox |
 | Replace never creates | `tests/test_replace.py` (fake), `tests/integration/test_replace_dropbox.py` (live) | Fake, live |
-| Replace refuses a stale write | Planned: mocked Dropbox that raises a conflict on `WriteMode.update(rev)`, plus one live test that changes the file between the read and the upload (Milestone 3) | Live Dropbox |
+| Replace refuses a stale write | `test_dropbox_replace.py` (mocked conflict on `WriteMode.update(rev)`); `integration/test_replace_dropbox.py` (live) | Mocked Dropbox, live Dropbox |
 | Move never overwrites | `test_update.py`; `integration/test_update_dropbox.py` | Fake, live |
-| Delete removes a folder and its contents | Planned: update `tests/test_delete.py`, plus an integration test with a nested folder | Fake, live |
+| Delete removes a folder and its contents | `test_delete.py`, `test_dropbox_delete.py`, `test_cached_storage.py` (cached entries inside the folder are dropped); `integration/test_delete_dropbox.py` (nested folder) | Fake, mocked Dropbox, live |
 | List returns every page, sorted by path | Planned: `tests/test_list.py` with a mocked `has_more=True` response, plus a live folder with more than one page | Mocked Dropbox with `has_more`, live |
 | Bad paths return 400 and never reach Dropbox | `test_validation.py` (update for normalization) | Fake |
 | Error body shape and codes | `test_storage_foundation.py` | Fake |
@@ -291,3 +291,10 @@ Upload a file, read its metadata, download it and compare bytes, list its folder
 | --- | --- | --- | --- | --- |
 | Internal review | TODO | PR comments | Draft complete | Mon Nov 2 evening |
 | External review of sections 3 and 6 | TODO (Team 3 or 6 contact) | PR comments | Draft complete | Tue Nov 3 |
+
+## Changes during implementation
+
+- **Replace on a folder returns `422 invalid_operation`, not `400`.** The shared contract (`cloud_storage_api` 0.2.0) defines `InvalidOperationError` for valid input the contract forbids, and a folder path is valid input. Shini's replace (`PUT /files`) was ported onto `hw2-milestone3` with this change.
+- **Folder delete is one Dropbox call.** We had planned to check the path first. Dropbox's `files_delete_v2` already removes a folder with everything inside it, so the extra `files_get_metadata` call was dropped: a file delete now costs 1 Dropbox call instead of 2.
+- **The metadata cache drops entries inside a deleted folder.** Before, a delete only removed the entry for the path itself, which was enough while folders couldn't be deleted. Now every cached entry below the folder is removed too, so a deleted folder's files don't keep answering `200` from Redis until their TTL runs out.
+- **Create and replace return `413 file_too_large` above 150 MiB, not `400`.** The shared contract added `FileTooLargeError` (413), so open question 9 is settled for Team 1. The limit stays 150 MiB because that is the most Dropbox's `files_upload` accepts in one call.
