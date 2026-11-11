@@ -1,13 +1,15 @@
-from fastapi import APIRouter,Depends
+from fastapi import APIRouter, Depends
 from app.dependencies import get_document_storage
 from app.providers.base import DocumentStorage
 
 router = APIRouter(
-    prefix="/health/storage",
+    prefix="/health",
     tags=["health"],
 )
 
-@router.get("")
+
+@router.get("/provider")
+@router.get("/storage", include_in_schema=False)
 def check_health(storage: DocumentStorage = Depends(get_document_storage)) -> dict:
     """
     Check the health of the cloud storage provider.

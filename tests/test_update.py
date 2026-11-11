@@ -43,6 +43,43 @@ def test_move_file(storage):
     assert body["size"] == 5
 
 
+def test_move_accepts_contract_field_names(storage):
+    original = storage.upload("/docs/report.pdf", b"hello")
+
+    response = client.patch(
+        "/files",
+        params={"path": "/docs/report.pdf"},
+        json={"new_path": "/archive/final.pdf"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == original.id
+    assert response.json()["path"] == "/archive/final.pdf"
+
+
+@pytest.mark.parametrize(
+    ("params", "body"),
+    [
+        (
+            {"path": "/report.pdf", "from_path": "/report.pdf"},
+            {"new_path": "/renamed.pdf"},
+        ),
+        (
+            {"path": "/report.pdf"},
+            {"new_path": "/renamed.pdf", "to_path": "/renamed.pdf"},
+        ),
+    ],
+)
+def test_move_rejects_mixed_field_names(storage, params, body):
+    storage.upload("/report.pdf", b"hello")
+
+    response = client.patch("/files", params=params, json=body)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert list(storage.files) == ["/report.pdf"]
+
+
 def test_moved_file_keeps_content_and_old_path_is_gone(storage):
     storage.upload("/report.pdf", b"hello")
 
