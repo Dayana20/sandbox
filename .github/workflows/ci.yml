@@ -1,35 +1,47 @@
-name: CI
+
+name: Document Storage CI
 
 on:
-  push:
-    branches: [main, yashwanth, milestone-3]
   pull_request:
-    branches: [main, yashwanth, milestone-3]
+    branches:
+      - hw2-milestone3
+
+  push:
+    branches:
+      - hw2-milestone3
 
 permissions:
   contents: read
 
 jobs:
-  checks:
+  test:
+    name: Test and Validate
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
-          python-version-file: .python-version
+          python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest ruff mypy
 
-      # No Dropbox token is set here. Live Dropbox tests under
-      # tests/integration are not part of a plain `pytest`.
-      - name: Tests
-        run: pytest
+      - name: Run tests
+        run: python -m pytest -q
 
-      - name: Lint
+      - name: Check linting
         run: ruff check .
 
-      - name: Type check
-        run: mypy app
+      - name: Check types
+        run: mypy .
+
+      - name: Build Docker image
+        run: docker build -t document-storage-api:ci .
