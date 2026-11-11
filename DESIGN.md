@@ -8,10 +8,10 @@
 | **Internal reviewer** | Annie, Shini |
 | **External reviewer** (contract-facing parts: sections 3 and 6) | Darsh (Team 6) |
 | **Status** | Draft |
-| **Last updated** | Nov 3, 2026 |
+| **Last updated** | Nov 11, 2026 |
 | **Decision memo** | https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit |
-| **Shared contract** | [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) tag `0.1.0`, commit `7c847b0` (repository baseline; route and error details follow the Oct 28 memo until they land in the package) |
-| **Implementation work** | [#31](https://github.com/Dayana20/sandbox/pull/31) |
+| **Shared contract** | [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) tag `0.2.0` (`cloud_storage_api`), pinned in `requirements.txt`. Tag `0.1.0` is the course template |
+| **Implementation work** | Branch `hw2-milestone3`: list and metadata (#37), move (#38), create, replace and delete (#39), provider health (#40) |
 
 ---
 
@@ -93,20 +93,18 @@ Concrete incompatibilities that affect Team 1:
 | Operation | Shared route | Team 1 today | Change needed |
 | --- | --- | --- | --- |
 | Health (API) | `GET /health` | `GET /health` exists | None |
-| Health (provider) | `GET /health/provider` | Missing | New (issue #2, Dayana) |
-| Create | `POST /files` (form: `file`, `path`) | Same | Rename error codes only, if needed |
+| Health (provider) | `GET /health/provider` | In review (#40) as `GET /health/storage`, one `users_get_current_account()` call | Rename the route to `/health/provider` to match the contract |
+| Create | `POST /files` (form: `file`, `path`) | Same; 413 above 150 MiB (#39) | None |
 | Replace | `PUT /files` (form: `file`, `path`) | Implemented: 404 if missing, 409 on a stale revision, 422 for a folder | Done |
-| Download | TODO final route (open question 2) | `GET /files/download?path=` | None if this route is agreed |
-| Metadata | TODO final route (open question 2) | `GET /files/metadata?path=` | Likely none |
-| Move | `PATCH /files?path=` with `{"new_path"}` | Same route; returns `400` for a same-path move, case-only rename or folder | Change those cases to `422 invalid_operation` if #5 is accepted |
+| Download | `GET /files/download?path=` (Proposed, shared issue #8) | Same | None |
+| Metadata | `GET /files/metadata?path=` (Proposed) | Same, returns the shared `FileInfo` fields (#37) | None |
+| Move | `PATCH /files?path=` with `{"new_path"}` (Proposed, shared issue #5) | `PATCH /files?from_path=` with `{"to_path"}` (#38); `400` for a same-path move, case-only rename or folder | Accept the shared field names; return `422 invalid_operation` for those three cases (Proposed). Not done yet |
 | Delete | `DELETE /files?path=` | Implemented: a file, or a folder with everything in it | Done |
-| List | `GET /files?path=` | Missing | New (Yashwanth, issue #3) |
+| List | `GET /files?path=` | Implemented (#37): direct children, every page, sorted by path, with `type` | Done |
 
 ### File info object
 
-`id`, `name`, `path`, `size`, `modified_at`. Team 1's `FileResource` already has these fields. `list` adds a `type` field (`file` or `folder`), pending open question 4.
-
-VERIFY: `modified_at` is returned today without a timezone (`2026-10-05T14:30:00`). The memo proposes UTC with a trailing `Z`. State what Team 1 will return and who confirms it.
+Team 1 returns the fields of the shared `FileInfo` (0.2.0): `id`, `name`, `path`, `size` (`null` for folders), `modified_at`, `etag` and `type` (`file` or `folder`, list entries only). `modified_at` is ISO 8601 UTC ending in `Z`. Dropbox sends a timestamp with no timezone that it documents as UTC, so `app/models/file.py` marks it as UTC before formatting.
 
 ### Representative request and response (observed response)
 
@@ -117,19 +115,21 @@ file=<bytes>, path=/docs/report.pdf
 
 200 OK
 {
-  "id": "id:QqRAUO3-OU4AAAAAAAAAVA",
+  "id": "id:QqRAUO3-OU4AAAAAAAAAZw",
   "name": "report.pdf",
   "path": "/docs/report.pdf",
   "size": 22,
-  "modified_at": "2026-11-04T16:35:07"
+  "modified_at": "2026-11-11T10:19:11Z",
+  "etag": "0165ffd86b82d170000000391630f83",
+  "type": null
 }
 ```
 
-Observed Nov 4, 2026 against real Dropbox through the app (path shortened). Procedure: `tests/integration/test_replace_dropbox.py`. A missing path returned `404 not_found` and nothing was created. Note: `modified_at` has no timezone today, so the UTC `Z` from the memo isn't implemented yet.
+Observed Nov 11, 2026 against real Dropbox through the app on `hw2-milestone3` plus #39 (path shortened). Procedure: create a file, then `PUT /files` with new bytes, as in `tests/integration/test_replace_dropbox.py`. A missing path returns `404 not_found` and nothing is created (same test).
 
 ### Information loss and limits
 
-- **Letter case:** Dropbox treats paths differing only in case as one file. Case-only rename returns 400 today.
+- **Letter case:** Dropbox treats paths differing only in case as one file. Case-only rename returns 400 today; the shared proposal makes it `422 invalid_operation`.
 - **Upload limit:** 150 MiB (157,286,400 bytes; `MAX_UPLOAD_BYTES` in `app/api/routes/upload.py`), Dropbox's single-call `files_upload` limit. Create and replace above it return `413 file_too_large`, as the shared contract's `FileTooLargeError` defines.
 - `id` is a Dropbox id and is opaque to callers.
 
@@ -144,6 +144,7 @@ Observed Nov 4, 2026 against real Dropbox through the app (path shortened). Proc
 | Dropbox calls | 2 | 1 |
 | Concurrent edit between read and write | Dropbox refuses the write | Silently replaces the other change |
 | Missing file | `files_get_metadata` raises not-found, so we return 404 and create nothing | Would create the file, so replace and create overlap |
+| File deleted between the two calls | `strict_conflict=True` makes Dropbox refuse the write: `409 conflict`, nothing created | Would recreate the file |
 | Consumer impact | Needs a status for "someone else changed it" (open question 3: 409 or 422) | None |
 
 ### Decision 2: keep existing routes
@@ -168,9 +169,11 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | --- | --- | --- | --- |
 | Path not found | `FileNotFoundError` | 404 | `not_found` |
 | Path already exists | `FileConflictError` | 409 (open question 3) | `conflict` |
-| Malformed path or name | `InvalidRequestError` | 400 | `invalid_request` (rename to `invalid_input`) |
+| Malformed path or name | `InvalidRequestError` | 400 | `invalid_request` |
 | No permission | `PermissionDeniedError` | 403 | `permission_denied` |
-| Dropbox failure or rate limit | `ProviderError` | 502 | `provider_error` (rename to `provider_failure`) |
+| Dropbox failure or rate limit | `ProviderError` | 502 | `provider_error` |
+| Folder where a file is required (replace) | `InvalidOperationError` | 422 | `invalid_operation` |
+| Unknown route / wrong method / unexpected failure | (FastAPI) | 404 / 405 / 500 | `not_found` / `method_not_allowed` / `internal_error`. The shared proposal uses `route_not_found` for an unknown route; Team 1 still sends `not_found` (not done yet) |
 | Provider not configured | `StorageNotConfiguredError` | 503 | `provider_not_configured` |
 | File too large | `FileTooLargeError` | 413 | `file_too_large` |
 
@@ -193,9 +196,9 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | Create | Validate path, read upload | 1 (`files_upload`) |
 | Replace | Validate path, read upload | 2 (`files_get_metadata`, `files_upload`) |
 | Move | Validate two paths | 2 (`files_get_metadata`, `files_move_v2`) |
-| Delete (file) | Validate path | 2 (`files_get_metadata`, `files_delete_v2`) |
+| Delete (file or folder) | Validate path | 1 (`files_delete_v2`) |
 | List | Sort by path | 1 `files_list_folder`, plus 1 `files_list_folder_continue` per extra page |
-| Provider health | None | 1 (`health_provide`) |
+| Provider health | None | 1 (`users_get_current_account`, #40) |
 
 **Deployment (Milestone 3):** hosting is not decided yet (owner: **[name]**, decide by Nov 7). Assumptions so far: credentials come from environment variables, never from the image; Redis is optional; one Dropbox app folder per deployment.
 
@@ -203,7 +206,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 
 ## 6. Migration and coordination plan
 
-**Contract revision adopted:** tag `0.1.0` (commit `7c847b0`), the template baseline. Routes and errors follow the memo until the storage package is tagged.
+**Contract revision adopted:** tag `0.2.0`. `requirements.txt` installs `cloud_storage_api` from that tag; `move` returns its `FileInfo`, and replace and create raise its `InvalidOperationError` and `FileTooLargeError`. Route names are not in the package, so they follow the memo and the shared issues.
 
 ### What changes
 
@@ -212,7 +215,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | Routes | Add `PUT /files`, `GET /files`, `GET /health/provider` | None (additive) |
 | Delete | Folders are deleted recursively instead of returning 400 | A caller that relied on the 400 now deletes data. Record in release notes. |
 | Paths | Leading `/` is added instead of rejected | A request that returned 400 now succeeds |
-| Errors | Pending issue #4 (Darsh) | If renamed, callers branching on `invalid_request` or `provider_error` must switch to `invalid_input` / `provider_failure`. Listed in release notes. |
+| Errors | No renames: `invalid_request` and `provider_error` already match the shared proposal (#4). Added `413 file_too_large` and `422 invalid_operation` | Callers that checked 400 for an oversized upload or a folder replace now get 413 or 422 |
 | Python | README says 3.10; the memo says 3.12 | Update `.python-version`, CI and `requirements.txt` |
 | Tests | Add tests for each new route; update `test_validation.py` and `test_delete.py` | None |
 | Docs | Update the README and add new route sections | None |
@@ -226,7 +229,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | `GET /files` list | Yashwanth | Path rule, open questions 4 and 5 | Same three levels, including a folder with more than one Dropbox page |
 | `GET /health/provider` | Dayana | None | Test with the fake and with bad credentials |
 | Recursive folder delete | Annie | Open question 6 | Done: `test_delete.py`, `test_dropbox_delete.py`, integration test with a nested folder |
-| Error code rename | Yashwanth | Code table decision | Updated `test_storage_foundation.py` |
+| Move restrictions to 422 and `route_not_found` | TODO | Shared issue #5 | Updated `test_update.py`, `test_error_style.py` |
 | Python 3.12 and package adoption | Annie | Package skeleton | CI green |
 
 ### If the contract changes after implementation starts
@@ -242,11 +245,11 @@ The coordinator announces the change in the document-storage Slack channel. Per 
 | Guarantee | Check | Level |
 | --- | --- | --- |
 | Create never overwrites | `test_upload.py`; `integration/test_upload_dropbox.py` | Fake, mocked Dropbox, live Dropbox |
-| Replace never creates | `tests/test_replace.py` (fake), `tests/integration/test_replace_dropbox.py` (live) | Fake, live |
+| Replace never creates, even if the file is deleted mid-replace | `tests/test_replace.py` (fake), `tests/integration/test_replace_dropbox.py` (live, including `test_replace_after_delete_does_not_recreate_the_file`) | Fake, live |
 | Replace refuses a stale write | `test_dropbox_replace.py` (mocked conflict on `WriteMode.update(rev)`); `integration/test_replace_dropbox.py` (live) | Mocked Dropbox, live Dropbox |
 | Move never overwrites | `test_update.py`; `integration/test_update_dropbox.py` | Fake, live |
 | Delete removes a folder and its contents | `test_delete.py`, `test_dropbox_delete.py`, `test_cached_storage.py` (cached entries inside the folder are dropped); `integration/test_delete_dropbox.py` (nested folder) | Fake, mocked Dropbox, live |
-| List returns every page, sorted by path | Planned: `tests/test_list.py` with a mocked `has_more=True` response, plus a live folder with more than one page | Mocked Dropbox with `has_more`, live |
+| List returns every page, sorted by path | `test_list.py`; `test_dropbox_list.py` (mocked `has_more=True` pages); `integration/test_list_dropbox.py` | Fake, mocked Dropbox, live |
 | Bad paths return 400 and never reach Dropbox | `test_validation.py` (update for normalization) | Fake |
 | Error body shape and codes | `test_storage_foundation.py` | Fake |
 | Dropbox failures are logged without secrets | `test_dropbox_error_logging.py` | Mocked Dropbox |
@@ -272,16 +275,21 @@ Upload a file, read its metadata, download it and compare bytes, list its folder
 | 4 | How list marks folders | Shape of list entries | Yashwanth, Jing | Add `type` field or exclude folders |
 | 5 | Size of a full list | Number of Dropbox calls per list | Yashwanth | Decide cap or optional cursor |
 | 6 | Folder delete that fails partway | Status and caller guidance | All teams | Decide status |
-| 9 | Smallest accepted upload and the status above it | Our 150 MB or MiB limit | Teams 1 and 3 | Confirm units and status |
+| 9 | Smallest accepted upload and the status above it | Settled for Team 1: 150 MiB (157,286,400 bytes), `413 file_too_large` | Teams 1 and 3 | Team 3 to confirm |
 | 11 | Versioning and approvals | Which commit we pin | Coordinator | Define the first tag |
 | 12 | Routes for download, metadata and delete | Whether our current routes change | Clause owners | Name routes in the contract draft |
-| 13 | One error code name per status | Rename `invalid_request` / `provider_error` or not | Darsh (#4) | Teams 1 and 3 confirm on #4 |
+| 13 | One error code name per status | Settled for Team 1: keep `invalid_request` / `provider_error` | Darsh (#4) | Team 3 renames its codes |
 
 ### Review log
 
 | Reviewer | Comment | Response | Outcome |
 | --- | --- | --- | --- |
-| TODO | | | Changed / Explained / Accepted risk / Deferred (owner, date) |
+| noobui-omen (Team 6), on #32 | Keep `invalid_request` and `provider_error` | Rename proposal removed from sections 5 and 6 | Changed |
+| noobui-omen (Team 6), on #32 | Update template-tag references; describe package adoption | Header and section 6 now pin `0.2.0` and say which shared types the code uses | Changed |
+| noobui-omen (Team 6), on #32 | Align metadata fields and UTC `Z` with `FileInfo` | Already in code (#37); section 3 updated and a new response observed Nov 11 | Changed |
+| noobui-omen (Team 6), on #32 | Exact byte limit, MB/MiB, 413 | 157,286,400 bytes, `413 file_too_large` (#39) | Changed |
+| noobui-omen (Team 6), on #32 | Record Move restrictions and framework error codes | Route table and error table record today's 400 and `not_found` and the proposed 422 and `route_not_found` | Deferred (owner TODO, Milestone 3) |
+| noobui-omen (Team 6), on #32 | "Replace never creates" vs a concurrent delete | `strict_conflict=True` refuses the write; evidence: `test_replace_after_delete_does_not_recreate_the_file` (live) | Explained |
 
 ---
 
@@ -290,7 +298,7 @@ Upload a file, read its metadata, download it and compare bytes, list its folder
 | Task | Owner | Output | Depends on | Target |
 | --- | --- | --- | --- | --- |
 | Internal review | TODO | PR comments | Draft complete | Mon Nov 2 evening |
-| External review of sections 3 and 6 | TODO (Team 3 or 6 contact) | PR comments | Draft complete | Tue Nov 3 |
+| External review of sections 3 and 6 | noobui-omen (Team 6) | Comments on #32, answered in the review log | Draft complete | Done Nov 11 |
 
 ## Changes during implementation
 
