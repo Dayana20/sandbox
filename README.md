@@ -6,7 +6,7 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 
 **Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [DESIGN.md](DESIGN.md) (HW2: adopting the shared Document Storage API) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built. `GET /health/storage` checks whether the Dropbox connection is up using the lightweight `users_get_current_account()` call.
 
 ## Base
 
