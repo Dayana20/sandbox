@@ -17,8 +17,12 @@ ERROR_DESCRIPTIONS = {
     403: "`permission_denied`: Dropbox refused access",
     404: "`not_found`: nothing exists at the path",
     409: "`conflict`: a file already exists at the target path",
+    422: "`invalid_operation`: the path is valid but cannot be used for this operation",
     502: "`provider_error`: Dropbox failed or is unreachable",
-    503: "`provider_not_configured`: Dropbox credentials are missing",
+    503: (
+        "`provider_unavailable`: Dropbox is temporarily unavailable; "
+        "`provider_not_configured`: Dropbox credentials are missing"
+    ),
 }
 
 

@@ -1,4 +1,8 @@
-from app.errors import FileConflictError, FileNotFoundError
+from app.errors import (
+    FileConflictError,
+    FileNotFoundError,
+    InvalidOperationError,
+)
 from app.models.file import FileResource
 from cloud_storage_api import FileInfo, ConflictError
 from datetime import timezone
@@ -7,6 +11,41 @@ class FakeDocumentStorage:
 
     def __init__(self):
         self.files: dict[str, tuple[FileResource, bytes]] = {}
+        self.folders: dict[str, FileResource] = {
+            "/": FileResource(
+                id=None,
+                name="",
+                path="/",
+                size=None,
+                modified_at=None,
+            )
+        }
+
+    def create_folder(self, path: str) -> FileResource:
+        """Create an explicit folder for controlled tests."""
+        if path in self.files:
+            raise FileConflictError(f"File already exists: {path}")
+        self._ensure_parent_folders(f"{path}/placeholder")
+        folder = self.folders.get(path)
+        if folder is None:
+            folder = self._folder_resource(path)
+            self.folders[path] = folder
+        return folder
+
+    def _folder_resource(self, path: str) -> FileResource:
+        return FileResource(
+            id=path,
+            name=path.rsplit("/", maxsplit=1)[-1],
+            path=path,
+            size=None,
+            modified_at=None,
+        )
+
+    def _ensure_parent_folders(self, path: str) -> None:
+        parts = path.strip("/").split("/")[:-1]
+        for index in range(1, len(parts) + 1):
+            folder_path = "/" + "/".join(parts[:index])
+            self.folders.setdefault(folder_path, self._folder_resource(folder_path))
 
     def upload(
         self,
@@ -14,11 +53,12 @@ class FakeDocumentStorage:
         content: bytes,
     ) -> FileResource:
 
-        if path in self.files:
+        if path in self.files or path in self.folders:
             raise FileConflictError(
                 f"File already exists: {path}"
             )
 
+        self._ensure_parent_folders(path)
         name = path.split("/")[-1]
 
         resource = FileResource(
@@ -41,12 +81,32 @@ class FakeDocumentStorage:
         path: str,
     ) -> FileResource:
 
-        if path not in self.files:
-            raise FileNotFoundError(
-                f"File not found: {path}"
-            )
+        if path in self.files:
+            return self.files[path][0]
+        if path in self.folders:
+            return self.folders[path]
+        raise FileNotFoundError(f"File not found: {path}")
 
-        return self.files[path][0]
+    def list_files(self, path: str) -> list[FileResource]:
+        if path in self.files:
+            raise InvalidOperationError(f"Path is not a folder: {path}")
+        if path not in self.folders:
+            raise FileNotFoundError(f"Folder not found: {path}")
+
+        def parent(resource_path: str) -> str:
+            return resource_path.rsplit("/", maxsplit=1)[0] or "/"
+
+        entries = [
+            resource.model_copy(update={"type": "file"})
+            for resource, _ in self.files.values()
+            if parent(resource.path) == path
+        ]
+        entries.extend(
+            resource.model_copy(update={"type": "folder"})
+            for folder_path, resource in self.folders.items()
+            if folder_path != "/" and parent(folder_path) == path
+        )
+        return sorted(entries, key=lambda resource: resource.path)
 
     def download(
         self,
@@ -75,8 +135,13 @@ class FakeDocumentStorage:
             raise ConflictError(
                 f"File already exists: {to_path}"
             )
+        if to_path in self.folders:
+            raise ConflictError(
+                f"Path already exists: {to_path}"
+            )
 
         resource, content = self.files.pop(from_path)
+        self._ensure_parent_folders(to_path)
 
         updated_resource = FileResource(
             id=resource.id,
@@ -84,6 +149,8 @@ class FakeDocumentStorage:
             path=to_path,
             size=resource.size,
             modified_at=resource.modified_at,
+            etag=resource.etag,
+            type=resource.type,
         )
 
         self.files[to_path] = (

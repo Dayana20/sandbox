@@ -53,7 +53,9 @@ def test_dropbox_move_success():
     assert result.name == "final.pdf"
     assert result.path == "/archive/final.pdf"
     assert result.size == 5
+    assert result.modified_at == "2026-10-05T14:30:00Z"
     assert result.etag == "abcdef123"
+
 
 def test_dropbox_move_refuses_folder():
     mock_client = Mock()

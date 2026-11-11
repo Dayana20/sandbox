@@ -10,6 +10,7 @@ ERROR_SCHEMA = "#/components/schemas/ErrorResponse"
     ("method", "path", "statuses"),
     [
         ("post", "/files", ["400", "403", "409", "502", "503"]),
+        ("get", "/files", ["400", "403", "404", "422", "502", "503"]),
         ("get", "/files/metadata", ["400", "403", "404", "502", "503"]),
         ("get", "/files/download", ["400", "403", "404", "502", "503"]),
         ("patch", "/files", ["400", "403", "404", "409", "502", "503"]),

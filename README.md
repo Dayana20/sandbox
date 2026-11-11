@@ -6,7 +6,7 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 
 **Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [DESIGN.md](DESIGN.md) (HW2: adopting the shared Document Storage API) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
 
-Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
+Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built.
 
 ## Base
 
@@ -15,14 +15,21 @@ Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_d
 | Method | Purpose | Input | Returns | Changes Dropbox? | Caller can assume |
 | --- | --- | --- | --- | --- | --- |
 | `upload(path, content)` | Save a new file | file path, bytes | `FileResource` | Yes | An existing file is never overwritten or renamed |
-| `get_metadata(path)` | Look up a file | file path | `FileResource` | No | Only files, not folders |
+| `get_metadata(path)` | Look up a file or folder | resource path | `FileResource` | No | Folder-only fields are nullable |
+| `list_files(path)` | List a folder's direct children | folder path | `list[FileResource]` | No | Every provider page is included and results are sorted by path |
 | `download(path)` | Get a file's contents | file path | `bytes` | No | Bytes are exactly what was uploaded |
 | `move(from_path, to_path)` | Rename or move a file | old path, new path | `FileInfo` | Yes | The `id` stays the same; nothing at `to_path` is overwritten |
 | `delete(path)` | Delete a file | file path | `None` | Yes | Only files are deleted, never folders |
 
-Paths are absolute inside the Dropbox app folder, e.g. `/docs/report.pdf`.
+Callers may send paths with or without a leading slash. The service validates
+and returns the canonical absolute form, e.g. both `docs/report.pdf` and
+`/docs/report.pdf` identify `/docs/report.pdf`.
 
-`FileResource` (`app/models/file.py`) has `id`, `name`, `path`, `size`, and optional `modified_at`.
+`FileResource` (`app/models/file.py`) matches the accepted shared `FileInfo`
+shape: `id`, `name`, `path`, `size`, `modified_at`, `etag`, and `type`.
+`modified_at` is an ISO 8601 UTC string ending in `Z`. Folder metadata has
+`size`, `modified_at`, and `etag` set to `null`. `type` is reserved for List
+entries and is `null` on Metadata responses.
 
 ## Errors
 
@@ -36,10 +43,11 @@ Every failed request returns the same JSON shape, whichever endpoint it came fro
 
 | Status | Code | Raised as | When it happens | Retry? |
 | --- | --- | --- | --- | --- |
-| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (e.g. `path` without a leading `/`), the path is a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
+| 400 | `invalid_request` | `InvalidRequestError` | Missing or badly formed input (for example an empty or traversal path), a file-only operation receives a folder, a file is over 150 MB, or Dropbox refuses the name | No. Fix the request first |
 | 403 | `permission_denied` | `PermissionDeniedError` | The Dropbox app or token isn't allowed to do this, or the token is invalid | No. Fix the app permissions or credentials |
 | 404 | `not_found` | `FileNotFoundError` | Nothing exists at the requested path (for Move, `from_path`), including a repeated delete or move | No |
 | 409 | `conflict` | `FileConflictError` | A file already exists at the target path (upload or move) | No. Choose another path |
+| 422 | `invalid_operation` | `InvalidOperationError` | A valid resource cannot be used for the requested operation, such as listing a file as a folder | No. Use a folder path |
 | 409 | `idempotency_conflict` | `IdempotencyConflictError` | An upload's `Idempotency-Key` was already used for a different request (different `path` or bytes) | No. Use a new key for a different upload |
 | 409 | `idempotency_in_progress` | `IdempotencyInProgressError` | The same request with this key is still running, or was cut off. It was not repeated | Yes, later, with the same key |
 | 409 | `idempotency_outcome_unknown` | `IdempotencyOutcomeUnknownError` | The first request with this key may have uploaded the file, so it is not repeated | No. Check whether the file exists, then use a new key |
@@ -151,15 +159,21 @@ Put `@logs_dropbox_errors` on every new `DropboxStorage` method so its Dropbox f
 
 Every route that takes a file path checks it with `validate_path` from `app/validation.py` before calling storage. A bad path returns `400 invalid_request` and Dropbox is never called. The same rules apply to upload, metadata, download, move (both `from_path` and `to_path`) and delete:
 
-| Rule | Rejected example |
+| Rule | Behavior/example |
 | --- | --- |
 | Required | missing or empty |
 | No control characters (newline, tab, null byte, ...) | `/docs/a\n.pdf` |
-| Starts with `/` | `docs/report.pdf` |
+| Leading `/` is optional and added canonically | `docs/report.pdf` becomes `/docs/report.pdf` |
 | Ends with a file name, not `/` | `/docs/`, `/` |
 | No empty, `.` or `..` segments | `/docs//a.pdf`, `/docs/./a.pdf`, `/docs/../a.pdf` |
 
-Paths are not normalized or lower-cased; the service passes them to Dropbox exactly as given. Dropbox's own `id:` and `ns:` path forms are not accepted. Dropbox can still refuse a path that passes these checks (for example a name it disallows), which is also returned as `400`.
+The root `/` remains invalid for these file operations. It is reserved for the
+future List operation and is not accepted by Metadata or destructive routes.
+
+Apart from adding the leading slash, paths are not rewritten or lower-cased;
+the canonical path is passed to storage. Dropbox's own `id:` and `ns:` path
+forms are not accepted. Dropbox can still refuse a path that passes these
+checks (for example a name it disallows), which is also returned as `400`.
 
 ## Dropbox error logs
 
@@ -198,7 +212,9 @@ Example response:
   "name": "report.pdf",
   "path": "/docs/report.pdf",
   "size": 20483,
-  "modified_at": "2026-10-05T14:30:00"
+  "modified_at": "2026-10-05T14:30:00Z",
+  "etag": "015rev",
+  "type": null
 }
 ```
 
@@ -219,7 +235,7 @@ Try it:
 curl -i -X POST http://127.0.0.1:8000/files -F "file=@report.pdf" -F "path=/docs/report.pdf"
 ```
 
-How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so only `id`, `name`, `path`, `size` and `modified_at` are returned. The token comes from `.env`, which is not committed.
+How it works: the route checks the input and calls `storage.upload()`. `DropboxStorage.upload()` calls Dropbox `files_upload` with `WriteMode.add` and `autorename=False`, so existing files are never overwritten. The result goes through `to_file_resource()`, so no Dropbox SDK object escapes the adapter. The token comes from `.env`, which is not committed.
 
 ## Upload idempotency
 
@@ -249,7 +265,7 @@ Only upload has this. Metadata reads, downloads, moves and deletes do not. `Docu
 | Key rules | 1 to 255 characters. An empty or longer key is `400 invalid_request` |
 | Scope | The whole service, for the upload operation. One key identifies one logical upload, whoever sends it |
 | Redis key | `document-storage:idempotency:upload:<SHA-256 of the key>`. The caller's key is never stored in Redis or logged. Logs show the first 12 characters of the hash as `key_id` |
-| Fingerprint | SHA-256 of canonical JSON `{"content_sha256": ..., "operation": "upload", "path": ..., "version": 1}`. So it covers the destination `path` and the file bytes. The file name and content type the client sends are not part of it, because the upload ignores them. The file itself is never stored |
+| Fingerprint | SHA-256 of canonical JSON `{"content_sha256": ..., "operation": "upload", "path": ..., "version": 1}`. The path is normalized first, so `docs/a.pdf` and `/docs/a.pdf` are the same logical request. The fingerprint covers that canonical destination and the file bytes. The file name and content type the client sends are not part of it, because the upload ignores them. The file itself is never stored |
 | Record | JSON with `state`, `fingerprint`, an internal `owner` token (see [Reservation ownership](#reservation-ownership)) and, once it has succeeded, the `FileResource` that was returned |
 | Retention | `IDEMPOTENCY_TTL_SECONDS`, default `86400` (24 hours). Redis expires the record. The timer starts when the key is reserved (`in_progress`) and restarts each time the state changes. It is not renewed while an upload runs, so it must be longer than the longest upload |
 
@@ -343,13 +359,59 @@ python -m scripts.demo_idempotency      # uses REDIS_URL, default redis://localh
 
 It uploads once, replays, sends a changed payload, simulates a restart and an unreachable Redis, and prints how many times Dropbox was asked to upload at each step. It deletes the Dropbox file and the Redis record afterwards.
 
+## List folder contents
+
+`GET /files?path=/docs` returns every direct child of the folder as a JSON
+array. Files and folders are included; deeper descendants are not. A missing
+leading slash is added, and `/` lists the storage root.
+
+```json
+[
+  {
+    "id": "id:folder",
+    "name": "images",
+    "path": "/docs/images",
+    "size": null,
+    "modified_at": null,
+    "etag": null,
+    "type": "folder"
+  },
+  {
+    "id": "id:file",
+    "name": "report.pdf",
+    "path": "/docs/report.pdf",
+    "size": 1234,
+    "modified_at": "2026-11-10T14:30:00Z",
+    "etag": "015rev",
+    "type": "file"
+  }
+]
+```
+
+Results are sorted by canonical path using ordinary string ordering. Dropbox
+is called with `recursive=False`; all Dropbox continuation pages are fetched
+before the response is returned. Native cursors and page sizes are never
+exposed. An existing empty folder returns `200` with `[]`. A missing folder
+returns `404 not_found`. Listing a file as a folder currently returns the
+shared `422 invalid_operation` error; this mapping follows the shared error
+model while the cross-team edge-case decision remains subject to confirmation.
+
+List is deliberately not Redis-cached. When metadata caching is enabled,
+`CachedDocumentStorage` forwards List directly to Dropbox so directory
+invalidation rules are not introduced implicitly.
+
+```bash
+curl -i "http://127.0.0.1:8000/files?path=/docs"
+curl -i "http://127.0.0.1:8000/files?path=/"
+```
+
 ## Get file metadata
 
-`GET /files/metadata?path=...` returns `200 OK` with the file's metadata. It only reads; nothing in Dropbox changes.
+`GET /files/metadata?path=...` returns `200 OK` with file or folder metadata. It only reads; nothing in Dropbox changes.
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `path` | yes | The file to look up, e.g. `/docs/report.pdf` |
+| `path` | yes | The file or folder to look up, e.g. `/docs/report.pdf` |
 
 Example response:
 
@@ -359,18 +421,28 @@ Example response:
   "name": "report.pdf",
   "path": "/docs/report.pdf",
   "size": 20483,
-  "modified_at": "2026-10-05T14:30:00"
+  "modified_at": "2026-10-05T14:30:00Z",
+  "etag": "015rev",
+  "type": null
 }
 ```
+
+For a folder, `size`, `modified_at`, and `etag` are `null`. `type` remains
+`null` because the accepted contract uses it only for List entries. Dropbox's
+naive `server_modified` value is documented as UTC and is normalized before it
+enters `FileResource`; aware timestamps are converted to the same UTC `Z`
+format without changing the instant.
 
 Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing or bad `path`, or `path` is a folder |
+| 400 | `invalid_request` | Missing or bad `path` |
 | 403 | `permission_denied` | Token can't read this path |
 | 404 | `not_found` | Nothing exists at `path` |
 | 502 | `provider_error` | Dropbox failed |
+| 503 | `provider_unavailable` | Dropbox is temporarily unreachable or unavailable |
+| 503 | `provider_not_configured` | Dropbox credentials are missing |
 
 Try it:
 
@@ -378,7 +450,7 @@ Try it:
 curl -i "http://127.0.0.1:8000/files/metadata?path=/docs/report.pdf"
 ```
 
-How it works: the route in `app/api/routes/read.py` checks `path` with `validate_path` and calls `storage.get_metadata()` on the `DocumentStorage` interface. `DropboxStorage.get_metadata()` calls Dropbox `files_get_metadata`, refuses folders, and returns a `FileResource`. Lookup failures go through `translate_lookup_error`, so a missing file is `404`.
+How it works: the route in `app/api/routes/read.py` checks `path` with `validate_path` and calls `storage.get_metadata()` on the `DocumentStorage` interface. `DropboxStorage.get_metadata()` calls Dropbox `files_get_metadata` once and converts file or folder metadata to `FileResource`. Lookup failures go through `translate_lookup_error`, so a missing resource is `404`.
 
 
 ## Download file
@@ -429,7 +501,9 @@ Example response:
   "name": "report.pdf",
   "path": "/archive/report.pdf",
   "size": 20483,
-  "modified_at": "2026-10-05T14:30:00"
+  "modified_at": "2026-10-05T14:30:00Z",
+  "etag": "015rev",
+  "type": null
 }
 ```
 
@@ -506,8 +580,8 @@ How it behaves:
   - If a delete or move reaches Dropbox and Dropbox confirms that the source does not exist (`not_found`), the cached metadata for that source path is invalidated before the `not_found` error is returned. The cached entry was stale. For a move only the source path is dropped, because a missing destination is reported as a conflict or `provider_error`, never as `not_found`. An upload that gets `not_found` leaves the cache alone, because that says nothing about the cached file.
   - A `provider_error` or any unexpected exception means Dropbox may have applied the change before the failure reached us. The entries are deleted anyway and the original error is re-raised unchanged.
   - If Redis is down during that delete, the Dropbox error still wins and `cache_error` is logged.
-- **Bad cache data:** a value in Redis that is not valid JSON, does not fit `FileResource`, or cannot be decoded is treated as a miss. `cache_error` is logged with the exception type only, never the stored contents. Dropbox is called, the fresh result is returned, and the bad value is overwritten with valid metadata. The request does not fail.
-- **Path casing:** Dropbox treats `/Docs/A.pdf` and `/docs/a.pdf` as one file, so the cache key uses the lower-cased path and both spellings share one entry (reads, and invalidation on upload, move and delete). Only the key is lower-cased. Dropbox still receives the path exactly as the caller sent it and the cached `FileResource` keeps Dropbox's `path_display`. This assumes the provider ignores case like Dropbox does. A case-sensitive provider would need a different key function (`metadata_key`).
+- **Bad cache data:** a value in Redis that is not valid JSON, does not fit `FileResource`, or cannot be decoded is treated as a miss. `cache_error` is logged with the exception type only, never the stored contents. Dropbox is called, the fresh result is returned, and the bad value is overwritten with valid metadata. The request does not fail. Existing entries from the earlier schema remain readable: missing `etag` and `type` become `null`, and a naive legacy `modified_at` is normalized to UTC `Z`, so a new cache namespace was not needed.
+- **Path identity:** Routes add a missing leading slash before the cache wrapper is called, so `docs/a.pdf` and `/docs/a.pdf` use the same key for reads and invalidation. Dropbox also treats `/Docs/A.pdf` and `/docs/a.pdf` as one file, so the cache key is lower-cased and those spellings share one entry. Only the key is lower-cased; the canonical path sent to Dropbox retains the caller's casing, and the cached `FileResource` keeps Dropbox's `path_display`. A case-sensitive provider would need a different key function (`metadata_key`).
 - **Redis down:** the failure is logged as `cache_error` (exception type only) and the call carries on with Dropbox. Callers never see a Redis error. A dead Redis adds up to about half a second per Redis call, because of the 0.5 second timeouts.
 - **Logs:** `cache_hit`, `cache_miss`, `cache_write`, `cache_invalidate` and `cache_error`. Like every other log line in this service, they never contain the file path: the hit, miss, write and invalidate lines show a short one-way `key` id instead (the first 12 hex characters of the SHA-256 of the lower-cased path), so one file always logs the same id whatever its letter case. File contents, tokens and the Redis URL are never logged.
 
@@ -515,7 +589,7 @@ How it behaves:
 
 - For changes made outside this service (the Dropbox website, another app), a metadata read is out of date by at most `METADATA_CACHE_TTL_SECONDS`, apart from the cases listed under permitted staleness.
 - After an upload, move or delete made through this service, the next read of those paths reaches Dropbox. This includes calls that fail with an uncertain outcome (`provider_error`) and a delete or move whose source Dropbox reports as `not_found`, but not calls Dropbox cleanly refuses for other reasons.
-- The same file read or changed with different letter case uses the same cache entry.
+- The same file read or changed with or without the leading slash, or with different letter case, uses the same cache entry.
 - Redis problems never make a request fail or change its result.
 
 **What Redis itself provides**
@@ -555,7 +629,7 @@ A plain `pytest` leaves out `tests/integration`. Those tests call real Dropbox, 
 pytest tests/integration -v
 ```
 
-Without a token they are skipped. They write under `/integration-tests/` and delete what they create.
+Without a token they are skipped. They use unique test-owned paths and delete what they create.
 
 | File | What it checks |
 | --- | --- |
@@ -565,8 +639,11 @@ Without a token they are skipped. They write under `/integration-tests/` and del
 | `test_cached_storage.py` | `CachedDocumentStorage` with `fakeredis`: miss then hit with the provider called once, errors and downloads not cached, TTL, invalidation on upload, move and delete (including uncertain provider failures, invalidation of the stale source entry on `not_found`, and no invalidation on other clean refusals), bad cached values treated as a miss, letter-case-insensitive keys, Redis down still works, and the dependency wiring |
 | `test_storage_foundation.py` | FastAPI can use `FakeDocumentStorage` instead of Dropbox. A missing file returns 404 `not_found`. Each shared exception maps to the status and code in the table above. |
 | `test_read.py` | `GET /files/metadata` with the fake storage: success, missing file returns 404, missing or bad path, Dropbox errors |
-| `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: correct call, folder refused, error mapping |
-| `integration/test_read_dropbox.py` | Reads metadata of a real Dropbox file and checks a missing path returns 404 |
+| `test_list.py` | `GET /files` with fake storage: root, empty and missing folders, canonical paths, direct children, sorting, file/folder types and shared errors |
+| `test_dropbox_list.py` | Mocked Dropbox List: root mapping, `recursive=False`, every continuation page, global sorting, mixed metadata, cursor safety and provider errors |
+| `integration/test_list_dropbox.py` | Credential-gated isolated real Dropbox hierarchy proving direct-child List behavior, types, ordering, root and missing-folder behavior |
+| `test_dropbox_storage.py` | `DropboxStorage.get_metadata` with a mocked Dropbox client: file/folder conversion, UTC timestamps, deleted metadata and error mapping |
+| `integration/test_read_dropbox.py` | Reads metadata of a real Dropbox file and folder, checks UTC/etag fields, and checks a missing path returns 404 |
 | `test_validation.py` | `validate_path` accepts good paths and rejects each bad kind. Every route that takes a path returns 400 for each bad path without calling storage. |
 | `test_dropbox_error_logging.py` | Dropbox failures are logged once with operation, path, error, Dropbox error and request id. Outages log at `ERROR` without a stack trace or response body. The token is never logged. Our own refusals and successes are not logged. |
 | `test_download.py` | `GET /files/download` with fake storage: returned bytes, empty content, missing path/file, and storage errors |
