@@ -1,4 +1,4 @@
-# Direct dependencies, pinned to the versions tested on Python 3.10.
+# Direct dependencies, pinned to the versions tested on Python 3.12.
 # Transitive dependencies are not pinned.
 
 # Application

@@ -1,0 +1,25 @@
+[project]
+name = "cloud-storage-api"
+version = "0.2.0"
+description = "Shared contract (models, errors, interface) for Document Storage services"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cloud_storage_api"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/cloud_storage_api/py.typed" = "cloud_storage_api/py.typed"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+ignore = []
