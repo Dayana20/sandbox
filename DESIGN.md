@@ -10,7 +10,7 @@
 | **Status** | Draft |
 | **Last updated** | Nov 11, 2026 |
 | **Decision memo** | https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit |
-| **Shared contract** | [Dayana20/ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) tag `0.2.0` (`cloud_storage_api`), pinned in `requirements.txt`. Tag `0.1.0` is the course template |
+| **Shared contract** | [`cloud_storage_api` tag `0.2.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.2.0), pinned in `requirements.txt`. Tag `0.1.0` is the course template |
 | **Implementation work** | Branch `hw2-milestone3`: list and metadata (#37), move (#38), create, replace and delete (#39), provider health (#40) |
 
 ---
@@ -216,7 +216,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | Delete | Folders are deleted recursively instead of returning 400 | A caller that relied on the 400 now deletes data. Record in release notes. |
 | Paths | Leading `/` is added instead of rejected | A request that returned 400 now succeeds |
 | Errors | No renames: `invalid_request` and `provider_error` already match the shared proposal (#4). Added `413 file_too_large` and `422 invalid_operation` | Callers that checked 400 for an oversized upload or a folder replace now get 413 or 422 |
-| Python | README says 3.10; the memo says 3.12 | Update `.python-version`, CI and `requirements.txt` |
+| Python | Python 3.14 or newer | Update `.python-version`, CI and `requirements.txt` |
 | Tests | Add tests for each new route; update `test_validation.py` and `test_delete.py` | None |
 | Docs | Update the README and add new route sections | None |
 
@@ -230,7 +230,7 @@ Normalization (`clean_up_path`) to allow users to find a path without using an a
 | `GET /health/provider` | Dayana | None | Test with the fake and with bad credentials |
 | Recursive folder delete | Annie | Open question 6 | Done: `test_delete.py`, `test_dropbox_delete.py`, integration test with a nested folder |
 | Move restrictions to 422 and `route_not_found` | TODO | Shared issue #5 | Updated `test_update.py`, `test_error_style.py` |
-| Python 3.12 and package adoption | Annie | Package skeleton | CI green |
+| Python 3.14 and package adoption | Annie | Package skeleton | CI green |
 
 ### If the contract changes after implementation starts
 
