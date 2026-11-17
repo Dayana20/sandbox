@@ -44,10 +44,14 @@ class Settings:
     # set. Uploads that send an Idempotency-Key are refused (503) without it.
     redis_url: str | None = os.getenv("REDIS_URL")
 
-    metadata_cache_ttl_seconds: int = int(os.getenv("METADATA_CACHE_TTL_SECONDS", "60"))
+    metadata_cache_ttl_seconds: int = int(
+        os.getenv("METADATA_CACHE_TTL_SECONDS", "60")
+    )
 
     # How long an Idempotency-Key is remembered. Must be a positive number.
-    idempotency_ttl_seconds: int = int(os.getenv("IDEMPOTENCY_TTL_SECONDS", "86400"))
+    idempotency_ttl_seconds: int = int(
+        os.getenv("IDEMPOTENCY_TTL_SECONDS", "86400")
+    )
 
 
 settings = Settings()
