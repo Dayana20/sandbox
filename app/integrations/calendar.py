@@ -34,7 +34,12 @@ class InMemoryCalendarService:
 
     def create(self, request: CreateEvent) -> Event:
         self._raise_injected_failure("create")
-        event = Event(id=uuid.uuid4().hex, **request.model_dump())
+        event = Event(
+            id=uuid.uuid4().hex,
+            title=request.title,
+            start=request.start,
+            end=request.end,
+        )
         self.events[event.id] = event
         return event
 
@@ -58,7 +63,12 @@ class InMemoryCalendarService:
                 retryable=False,
             )
 
-        event = Event(id=event_id, **request.model_dump())
+        event = Event(
+            id=event_id,
+            title=request.title,
+            start=request.start,
+            end=request.end,
+        )
         self.events[event.id] = event
         return event
 
