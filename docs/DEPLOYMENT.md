@@ -6,7 +6,7 @@ How the Document Storage API is run on Oracle Cloud (OCI), how to deploy a new v
 
 | Piece | Where | File |
 | --- | --- | --- |
-| Container image | Built on the VM from this repo | `Dockerfile` (Python 3.12, runs as a non-root user) |
+| Container image | Built on the VM from this repo | `Dockerfile` (Python 3.14, runs as a non-root user) |
 | Service definition | The VM | `compose.yaml` (one `api` service, restarts unless stopped, 650 MB memory limit) |
 | Dropbox credentials | `.env` on the VM only | never in the image (`.dockerignore` excludes `.env`) or in git |
 | Deploy pipeline | GitHub Actions | `.github/workflows/deploy-oci.yml` |
