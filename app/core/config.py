@@ -19,6 +19,17 @@ class Settings:
 
     team5_token_file: str | None = os.getenv("TEAM5_TOKEN_FILE")
 
+    tracker_impl: str = os.getenv(
+        "TRACKER_IMPL",
+        "fake",
+    )
+
+    trello_api_key: str | None = os.getenv("TRELLO_API_KEY")
+
+    trello_token: str | None = os.getenv("TRELLO_TOKEN")
+
+    trello_list_id: str | None = os.getenv("TRELLO_LIST_ID")
+
     dropbox_access_token: str | None = os.getenv(
         "DROPBOX_ACCESS_TOKEN"
     )
