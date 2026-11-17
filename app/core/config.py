@@ -12,6 +12,13 @@ class Settings:
         "Document Storage Service",
     )
 
+    calendar_impl: str = os.getenv(
+        "CALENDAR_IMPL",
+        "fake",
+    )
+
+    team5_token_file: str | None = os.getenv("TEAM5_TOKEN_FILE")
+
     dropbox_access_token: str | None = os.getenv(
         "DROPBOX_ACCESS_TOKEN"
     )
