@@ -3,6 +3,11 @@
 
 # Application
 cloud-storage-api @ git+https://github.com/Dayana20/ospsd26-cloud-storage.git@0.2.0#subdirectory=src/cloud_storage_api
+
+# Calendar integration
+calendar-contract @ git+https://github.com/Airbus-A330/OSPSD-Calendar.git@v0.1.0
+team5-calendar @ git+https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git@team5-calendar-v0.1.0#subdirectory=packages/team5-calendar
+
 fastapi==0.143.0
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
@@ -20,4 +25,4 @@ lupa==2.8
 # Lint and type check
 ruff==0.17.0
 mypy==2.4.0
-requests==2.34.0
+requests==2.34.2
