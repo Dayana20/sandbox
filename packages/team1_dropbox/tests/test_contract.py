@@ -32,7 +32,7 @@ def test_package_source_never_imports_generic_app_namespace() -> None:
     source_root = Path(__file__).parents[1] / "src" / "team1_dropbox"
     for source_file in source_root.glob("*.py"):
         tree = ast.parse(source_file.read_text(encoding="utf-8"))
-        imported_names = []
+        imported_names: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported_names.extend(alias.name for alias in node.names)
