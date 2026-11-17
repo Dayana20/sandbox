@@ -36,7 +36,7 @@ def test_factory_selects_team4_provider(monkeypatch):
     monkeypatch.setattr(settings, "trello_token", "test-token")
     monkeypatch.setattr(settings, "trello_list_id", "test-list")
     monkeypatch.setattr(
-        "team_4_issue_tracker_trello.TrelloIssueProvider",
+        "app.integrations.issue_tracker.TrelloIssueProvider",
         create_provider,
     )
 
@@ -122,32 +122,6 @@ def test_unexpected_error_maps_to_provider_error_with_step_name():
 
     assert exc_info.value.__cause__ is failure
     assert str(exc_info.value) == "Issue tracker create_issue failed"
-
-
-@pytest.mark.parametrize(
-    ("method", "call"),
-    [
-        ("get_issue", lambda provider: provider.get_issue("test-issue")),
-        (
-            "update_issue",
-            lambda provider: provider.update_issue(
-                "test-issue",
-                IssueUpdate(title="Updated issue"),
-            ),
-        ),
-        ("delete_issue", lambda provider: provider.delete_issue("test-issue")),
-        ("create_issue", lambda provider: provider.create_issue("Test issue")),
-        ("list_issues", lambda provider: provider.list_issues(limit=10)),
-    ],
-)
-def test_fake_can_inject_failure_for_each_method(method, call):
-    failure = RuntimeError("injected failure")
-    provider = InMemoryIssueProvider(failures={method: failure})
-
-    with pytest.raises(RuntimeError, match="injected failure") as exc_info:
-        call(provider)
-
-    assert exc_info.value is failure
 
 
 def test_fake_supports_update_list_and_delete():

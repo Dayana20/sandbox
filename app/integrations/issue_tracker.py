@@ -2,6 +2,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import TypeVar
 
+from team_4_issue_tracker_trello import TrelloIssueProvider
+
 from issue_tracker_contract import (
     ErrorCode,
     Issue,
@@ -20,6 +22,8 @@ from app.errors import (
     StorageNotConfiguredError,
 )
 
+# TypeVar is used to indicate that the return type of the operation
+# is the same as the return type of the _call method.
 T = TypeVar("T")
 
 
@@ -36,6 +40,8 @@ class InMemoryIssueProvider:
         try:
             return self.issues[issue_id]
         except KeyError as error:
+            # using from error to preserve the original exception context,
+            # which can be useful for debugging
             raise ServiceError(
                 ErrorCode.NOT_FOUND,
                 "Issue not found.",
@@ -161,8 +167,6 @@ def get_issue_provider() -> IssueProvider:
             raise StorageNotConfiguredError(
                 "Required when TRACKER_IMPL=team4: " + ", ".join(missing_settings)
             )
-
-        from team_4_issue_tracker_trello import TrelloIssueProvider
 
         try:
             provider = TrelloIssueProvider()
