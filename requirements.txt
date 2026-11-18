@@ -8,6 +8,10 @@ cloud-storage-api @ git+https://github.com/Dayana20/ospsd26-cloud-storage.git@0.
 calendar-contract @ git+https://github.com/Airbus-A330/OSPSD-Calendar.git@v0.1.0
 team5-calendar @ git+https://github.com/juno-junhyuk-lee/OSPSD-Team-5.git@team5-calendar-v0.1.0#subdirectory=packages/team5-calendar
 
+# Issue tracker integration
+issue-tracker-contract @ git+https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git@issue-tracker-contract-v1.1.0#subdirectory=contract
+team-4-issue-tracker-trello @ git+https://github.com/Tyler-Arciniaga/OSPSD-Team-4.git@team-4-issue-tracker-trello-v1.0.0#subdirectory=team-4-trello-impl
+
 fastapi==0.143.0
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
