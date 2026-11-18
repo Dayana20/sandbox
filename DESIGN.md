@@ -1,17 +1,22 @@
-# DESIGN: Document Storage Agent (Dropbox) adopting the shared Document Storage API
+# DESIGN: Team 1 composes Storage, Calendar and Issue Tracker (HW3 Milestone 1)
+
+> Items marked **⚠️ TO FILL** are not decided or not built yet. Whoever owns that part replaces the marker with the real answer.
 
 | | |
 | --- | --- |
-| **Title** | Team 1 (Dropbox) adopts the shared Document Storage API |
-| **Authors** | TODO |
-| **Team / vertical** | Team 1, Document Storage |
-| **Internal reviewer** | Annie, Shini |
-| **External reviewer** (contract-facing parts: sections 3 and 6) | Darsh (Team 6) |
+| **Title** | Team 1 composes Storage, Calendar and Issue Tracker behind one API operation |
+| **Authors** | ⚠️ TO FILL |
+| **Team / vertical** | Team 1, Document Storage (Dropbox) |
+| **Internal reviewer** | ⚠️ TO FILL (a teammate who did not write the section) |
+| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TO FILL (someone from another team) |
 | **Status** | Draft |
-| **Last updated** | Nov 11, 2026 |
-| **Decision memo** | https://docs.google.com/document/d/1K9U8uO-FVbeu0PGlWpr_frJ6YQmoHXdz/edit |
-| **Shared contract** | [`cloud_storage_api` tag `0.2.0`](https://github.com/Dayana20/ospsd26-cloud-storage/tree/0.2.0), pinned in `requirements.txt`. Tag `0.1.0` is the course template |
-| **Implementation work** | Branch `hw2-milestone3`: list and metadata (#37), move (#38), create, replace and delete (#39), provider health (#40) |
+| **Last updated** | Nov 18, 2026 |
+| **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (latest tag). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract` `v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
+| **Implementations used** | Storage: ours (Dropbox). Calendar: Team 5 `team5-calendar-v0.1.0`. Issue Tracker: Team 4 Trello `team-4-issue-tracker-trello-v1.0.0` |
+| **Decision memo** | HW2 storage memo: [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md) links it. ⚠️ TO FILL: link to any HW3 cross-team agreement |
+| **Implementation work** | Python 3.14 (#46), calendar integration (#47), issue tracker integration (#48), standalone Dropbox package (#49). ⚠️ TO FILL: the PR for the composed operation |
+
+The HW2 design (how our service adopted the shared storage contract) is kept in [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md).
 
 ---
 
@@ -19,277 +24,260 @@
 
 ### Context
 
-A consumer wants to upload, read, move, list and delete documents without caring which service stores them. Today the three Document Storage services differ in ways a caller must handle, and some differences cause silent data loss.
+HW2 made each vertical a shared contract: storage (`cloud_storage_api`), calendar (`calendar_contract`) and issue tracking (`issue_tracker_contract`). In HW3 a consumer wants one request that does work in all three places, for example "create a meeting, save its notes, and open a follow-up issue", without writing code for each provider.
 
-### Non-goals
+Per the TA, a team consumes another vertical by importing that team's **implementation package in-process**, not by calling their deployed HTTP API. So Team 1's service installs Team 5's calendar package and Team 4's Trello package and calls them through their contracts.
 
-- **Moving files between providers.** A path or id refers to a file in Team 1's Dropbox app folder only. Switching to another team's service does not bring the files along (shared memo, "What we are not doing").
-- **Choosing a bucket or app folder in requests.** Each deployment serves one Dropbox app folder, set by its credentials in `.env`. A consumer switches storage by changing the base URL and credentials (shared memo).
-- **Putting our cache and idempotency into the shared contract.** Team 1's Redis metadata cache and `Idempotency-Key` uploads stay in Team 1 extensions. They keep working, but other teams don't have to implement them, and a consumer must not depend on them to use the shared API.
+What makes this hard today, concretely:
 
-Concrete incompatibilities that affect Team 1:
-
-| Behavior | Team 1 today | Another team today | What a caller must change or can lose |
-| --- | --- | --- | --- |
-| Replace an existing file | `POST /files` returns 409 and never overwrites | Team 3 overwrites when `overwrite=true`; Team 6 has `PUT /files/{key}` | A caller written for Team 3 expects overwrite to work and gets 409 here |
-| Delete a folder | `DELETE /files` returns 400 for a folder | Team 3 deletes the folder and everything in it | A caller that relies on recursive delete leaves data behind on Team 1 |
-| Path without leading `/` | `validate_path` returns 400 | Team 6 uses `docs/report.pdf` with no leading `/` | A path valid on one service is rejected on another |
-| List | Not implemented | Teams 3 and 6 have list, with different response shapes | A caller cannot list at all against Team 1 |
+| Difference | Storage (ours) | Calendar (Team 5) | Issue Tracker (Team 4) | What a caller could get wrong |
+| --- | --- | --- | --- | --- |
+| Error type | Our `StorageError` subclasses, HTTP body `{"error": {"code", "message"}}` | `CalendarError(code, message, retryable)` | `ServiceError(code, message, provider_involved)` | Three exception types and three code sets for one request |
+| "Bad input" | `400 invalid_request` | `ErrorCode.INVALID_INPUT` | `invalid_input`, which the contract maps to **422** | The same mistake would surface as 400 from one step and 422 from another |
+| Uncertain write | `502 provider_error` (check before retrying) | `retryable` flag on the error | `provider_error` and `internal_error` are in `OUTCOME_UNKNOWN_CODES` | A caller that blindly retries can create a second event or issue |
+| Identifiers | Path (`/docs/a.pdf`) plus an opaque Dropbox `id` | Opaque event `id` | Opaque issue `id` | Three id kinds to keep together to undo or look up a run |
+| Time format | `modified_at` UTC ending in `Z` | RFC 3339 with an **explicit offset**; naive times are rejected | none | A timestamp valid for storage can be rejected by the calendar |
 
 ### Goals (observable)
 
-1. A consumer runs this workflow against Team 1 with the shared request shapes and no Team 1 specific code: create, metadata, download and compare bytes, list the folder, move, metadata at the new path, delete, metadata returns 404.
-2. Team 1 passes the shared conformance suite in the contract repo.
-3. Every existing HW1 route that is not in the common core still works, or its removal is recorded in section 6 with migration instructions.
+1. One deployed API operation runs fixed steps across storage, calendar and issue tracker for one test account, and returns the ids it created. ⚠️ TO FILL once the route exists: its URL and a recorded run.
+2. Every failure, whichever step it comes from, uses our one error body `{"error": {"code", "message"}}` and names the step that failed. A write whose result is unknown is reported as unknown, never as "nothing happened".
+3. Each partner implementation can be replaced by configuration only (`CALENDAR_IMPL`, `TRACKER_IMPL`), with no code change. The same operation runs unchanged against the in-memory fakes and the real providers.
+4. Existing storage routes behave exactly as in HW2 and keep passing the shared storage conformance suite.
+
+### Non-goals
+
+- **A product, an agent, a user interface or user accounts.** Milestone 2 adds those. This milestone uses one fixed test account per provider.
+- **Calling other teams' deployed services over HTTP.** We import their packages, as the TA clarified.
+- **Distributed transactions.** The three providers cannot commit together. We undo what we can and report what we cannot (section 5).
+- **Using every partner feature.** Only the operations the composed workflow needs are used.
 
 ---
 
 ## 2. Architecture and request flow
 
-### Components that change
+### Components
 
-| Component | File | Responsibility | Change |
+| Component | File | Responsibility | Status |
 | --- | --- | --- | --- |
-| Interface | `app/providers/base.py` (`DocumentStorage`) | The only type routes depend on | Add `replace`, `list`, `health`; extend `delete` to folders |
-| Provider adapter | `app/providers/dropbox/storage.py` (`DropboxStorage`) | Calls Dropbox, returns `FileResource` | Implement the new methods |
-| Error mapping | `app/providers/dropbox/error_mapping.py` | Dropbox exception to domain exception | Add mappings for replace and list |
-| HTTP routes | `app/api/routes/` | Validate input, call storage, return result | Add `PUT /files`, `GET /files`, `GET /health/provider` |
-| Path rules | `app/validation.py` | `validate_path` | Replace "reject missing leading `/`" with `clean_up_path` (Laya) |
-| Error handlers | `app/main.py`, `app/errors.py` | Domain exception to `{"error": {"code", "message"}}` | Rename codes if the code table changes |
-| Startup config | `app/dependencies.py` (`get_document_storage`) | Creates the Dropbox client from `.env` | No change. The Dropbox client is created once and shared by all requests (`get_dropbox_client()` uses `functools.cache`). If credentials are missing it isn't cached, so fixing `.env` and retrying works. |
+| Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract` (pinned in `requirements.txt`) | Types, interfaces and error codes we code against | Installed |
+| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Talk to the real calendar and Trello | Installed |
+| Calendar adapter | `app/integrations/calendar.py` | Picks the implementation from `CALENDAR_IMPL`, maps `CalendarError` codes to our errors, includes `InMemoryCalendarService` | Done (#47) |
+| Issue tracker adapter | `app/integrations/issue_tracker.py` | Picks the implementation from `TRACKER_IMPL`, maps `ServiceError` codes to our errors, includes `InMemoryIssueProvider` | Done in #48. ⚠️ TO FILL: #48 was merged into `hw3-integrate-calendar-api` after #47 had merged, so it is **not yet on `hw3-milestone1`** |
+| Storage | `app/providers/dropbox/` (`DropboxStorage`), `app/dependencies.py` | Unchanged from HW2 | Done |
+| Composed operation | ⚠️ TO FILL: route file and service function | Runs the fixed steps, undoes earlier steps on failure, returns all ids | **Not built** |
+| Error handling | `app/main.py`, `app/errors.py` | Turns our domain errors into the HTTP error body | Done |
+| Startup configuration | `app/core/config.py`, `.env` | `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL`, `TRELLO_*`, `DROPBOX_*` | Done |
 
-**Dependency direction:** routes depend on `DocumentStorage`. Only `app/providers/dropbox/` and `app/dependencies.py` know Dropbox exists. This is unchanged from HW1.
+**Dependency direction.** Routes depend only on our interfaces (`DocumentStorage`, the calendar and issue `get_*` factories). Only the adapters import partner packages. Partner exceptions are translated inside the adapters and never reach a route.
 
-**Who creates and closes the client:** `get_dropbox_client()` builds one Dropbox client from `.env` the first time a request needs it and caches it with `functools.cache`, so every request shares it. Nothing closes it explicitly; it lives as long as the process. If credentials are missing it isn't cached, so fixing `.env` and retrying works.
+**Who creates and closes clients, and who owns state.**
+- Dropbox: one client, created on first use and cached (`get_dropbox_client()`), as in HW2.
+- Calendar: `get_calendar_service()` builds a service on each call. With `CALENDAR_IMPL=team5`, Team 5's service is bound to the OAuth token file in `TEAM5_TOKEN_FILE` and authorizes on its first call.
+- Issue tracker: `get_issue_provider()` builds a provider on each call. With `TRACKER_IMPL=team4`, it reads `TRELLO_API_KEY`, `TRELLO_TOKEN` and `TRELLO_LIST_ID`.
+- ⚠️ TO FILL: whether the composed route builds the calendar and tracker once at startup or per request.
+- State: Team 1 keeps no application state for this operation. Events live in the test calendar, issues on the Trello list, documents in our Dropbox app folder.
 
-**State:** Team 1 keeps no application state; all file state lives in Dropbox. (With `REDIS_URL` set, Team 1's cache and idempotency records live in Redis. They are Team 1 extensions, outside the shared contract.)
+### The composed operation
 
-### Request trace: success (`PUT /files`, replace)
+⚠️ TO FILL: the team has not fixed the operation yet. **Proposed for discussion, replace or confirm:**
 
-1. Route parses form fields `file` and `path`.
-2. `clean_up_path(path)` normalizes the path. Invalid path returns `400 invalid_request` and Dropbox is not called.
-3. Route calls `storage.replace(path, content)` through `Depends(get_document_storage)`.
-4. `DropboxStorage.replace` calls `files_get_metadata(path)` to read the current `rev`. (Dropbox call 1)
-5. It calls `files_upload(content, path, mode=WriteMode.update(rev))`. (Dropbox call 2)
-6. `to_file_resource()` converts the result to `FileResource`.
-7. Route returns `200` with the file info JSON.
+> `POST /workflows/meeting` with `{"title", "start", "end"}`:
+> 1. **Calendar:** create the event.
+> 2. **Storage:** save a notes document at `/meetings/<event-id>.md`.
+> 3. **Issue tracker:** create the issue `Follow up: <title>`, mentioning the document path.
+>
+> Returns `201` with the event id, the document's file info and the issue id.
 
-**Logging:** no log line on success. Every response carries an `X-Request-ID` header.
+Guarantees it needs: each step runs at most once per request; a later step only runs if the earlier ones succeeded; the response either lists everything created or says which step failed and what may be left behind.
 
-### Request trace: expected failure (`PUT /files` on a missing path)
+Deliberate limits: one test account per provider; no retries inside the request; no update or delete operation across all three.
 
-1. Steps 1 to 3 as above.
-2. `files_get_metadata` raises `ApiError` with a not-found lookup error.
-3. `translate_lookup_error` raises `FileNotFoundError`. The `@logs_dropbox_errors` decorator writes one `dropbox_error` line with the operation, the error type, Dropbox's error and Dropbox's request id. No file path is logged. `app/main.py` then writes `request_failed operation=… error=not_found status=404 provider=yes request_id=…`.
-4. `app/main.py` returns `404 {"error": {"code": "not_found", "message": "..."}}`.
-5. Nothing is created. Create and replace never overlap.
+### Request trace: success
+
+⚠️ TO FILL after implementation. Expected shape, for the proposed operation:
+
+1. The route validates the body: title present, `start`/`end` RFC 3339 with an offset, `end` after `start`. Bad input returns `400 invalid_request` and **no provider is called**.
+2. Calendar adapter: `create(CreateEvent(...))` → Team 5 → event id.
+3. Storage: `upload("/meetings/<event-id>.md", notes)` → Dropbox `files_upload` (never overwrites) → file info.
+4. Issue adapter: `create_issue("Follow up: …")` → Team 4 → Trello → issue id.
+5. The route returns `201` with all three. No log line on success; every response carries `X-Request-ID`.
+
+### Request trace: expected failure
+
+⚠️ TO FILL after implementation. Expected shape: step 4 fails because Trello rejects the token.
+
+1. Team 4 raises `ServiceError(ACCESS_DENIED)`; the issue adapter maps it to `PermissionDeniedError`.
+2. The operation undoes steps 3 and 2: delete the document, delete the event.
+3. `app/main.py` returns `403 permission_denied` and writes one `request_failed` line with the operation and request id, no titles or paths.
 
 ---
 
 ## 3. API and data model
 
-### Route table
+**Authoritative contracts:** the three packages pinned in `requirements.txt` (links in the header). The HTTP shape of our storage routes is the one tested by the shared storage conformance suite ([TESTING.md](TESTING.md)).
 
-| Operation | Shared route | Team 1 today | Change needed |
-| --- | --- | --- | --- |
-| Health (API) | `GET /health` | `GET /health` exists | None |
-| Health (provider) | `GET /health/provider` | In review (#40) as `GET /health/storage`, one `users_get_current_account()` call | Rename the route to `/health/provider` to match the contract |
-| Create | `POST /files` (form: `file`, `path`) | Same; 413 above 150 MiB (#39) | None |
-| Replace | `PUT /files` (form: `file`, `path`) | Implemented: 404 if missing, 409 on a stale revision, 422 for a folder | Done |
-| Download | `GET /files/download?path=` (Proposed, shared issue #8) | Same | None |
-| Metadata | `GET /files/metadata?path=` (Proposed) | Same, returns the shared `FileInfo` fields (#37) | None |
-| Move | `PATCH /files?path=` with `{"new_path"}` (Proposed, shared issue #5) | `PATCH /files?from_path=` with `{"to_path"}` (#38); `400` for a same-path move, case-only rename or folder | Accept the shared field names; return `422 invalid_operation` for those three cases (Proposed). Not done yet |
-| Delete | `DELETE /files?path=` | Implemented: a file, or a folder with everything in it | Done |
-| List | `GET /files?path=` | Implemented (#37): direct children, every page, sorted by path, with `type` | Done |
+**Important choices**
 
-### File info object
+| Topic | Choice |
+| --- | --- |
+| Identifiers | Event and issue ids are opaque strings from the partner; we store and return them, never parse them. A storage file is named by its path; its Dropbox `id` is also returned |
+| Scope | One calendar and one Trello list per deployment, set by configuration. A request cannot choose another |
+| Calendar times | `start` and `end` must be RFC 3339 with an explicit offset (`calendar_contract.timestamps`); we pass them through unchanged |
+| Issue fields | `Issue` has only `id` and `title`. Titles are limited to 256 characters (`MAX_TITLE_LENGTH`); list returns at most 100 (`MAX_LIST_LIMIT`) |
+| Errors | Partner codes map to our existing errors (table in section 5), so callers see one error body |
 
-Team 1 returns the fields of the shared `FileInfo` (0.2.0): `id`, `name`, `path`, `size` (`null` for folders), `modified_at`, `etag` and `type` (`file` or `folder`, list entries only). `modified_at` is ISO 8601 UTC ending in `Z`. Dropbox sends a timestamp with no timezone that it documents as UTC, so `app/models/file.py` marks it as UTC before formatting.
+**Representative request and response:** ⚠️ TO FILL. At proposal time this would be an *illustrative expected response*; after implementation, a sanitized observed response and how it was produced.
 
-### Representative request and response (observed response)
+**Information loss and limits**
 
-```
-PUT /files
-Content-Type: multipart/form-data
-file=<bytes>, path=/docs/report.pdf
+- Mapping partner errors onto our storage error types loses the partner's own code. For example, the issue tracker's `precondition_failed` (412) and `request_in_progress` (409) both become our `409 conflict`, and its `idempotency_key_reused` becomes `400`.
+- Partner `not_found` becomes our `not_found`, whose message currently says "File not found" style text; the step name in the message tells the caller which provider it was.
+- The calendar's `retryable` flag and the issue tracker's `provider_involved` flag are not exposed to the caller.
 
-200 OK
-{
-  "id": "id:QqRAUO3-OU4AAAAAAAAAZw",
-  "name": "report.pdf",
-  "path": "/docs/report.pdf",
-  "size": 22,
-  "modified_at": "2026-11-11T10:19:11Z",
-  "etag": "0165ffd86b82d170000000391630f83",
-  "type": null
-}
-```
-
-Observed Nov 11, 2026 against real Dropbox through the app on `hw2-milestone3` plus #39 (path shortened). Procedure: create a file, then `PUT /files` with new bytes, as in `tests/integration/test_replace_dropbox.py`. A missing path returns `404 not_found` and nothing is created (same test).
-
-### Information loss and limits
-
-- **Letter case:** Dropbox treats paths differing only in case as one file. Case-only rename returns 400 today; the shared proposal makes it `422 invalid_operation`.
-- **Upload limit:** 150 MiB (157,286,400 bytes; `MAX_UPLOAD_BYTES` in `app/api/routes/upload.py`), Dropbox's single-call `files_upload` limit. Create and replace above it return `413 file_too_large`, as the shared contract's `FileTooLargeError` defines.
-- `id` is a Dropbox id and is opaque to callers.
+**HW2 operations:** every storage route stays as it is and is not part of the composed operation's contract. The standalone package in `packages/team1_dropbox` (#49) is how other teams consume our storage.
 
 ---
 
 ## 4. Alternatives and tradeoffs
 
-### Decision 1: implement replace with `WriteMode.update(rev)`
+### Decision 1: map partner errors onto our existing error types
 
-| | Chosen: read rev, then `update(rev)` | Alternative: `WriteMode.overwrite` |
+| | Chosen: reuse our errors (`InvalidRequestError`, `FileNotFoundError`, …) | Alternative: one error type per vertical |
 | --- | --- | --- |
-| Dropbox calls | 2 | 1 |
-| Concurrent edit between read and write | Dropbox refuses the write | Silently replaces the other change |
-| Missing file | `files_get_metadata` raises not-found, so we return 404 and create nothing | Would create the file, so replace and create overlap |
-| File deleted between the two calls | `strict_conflict=True` makes Dropbox refuse the write: `409 conflict`, nothing created | Would recreate the file |
-| Consumer impact | Needs a status for "someone else changed it" (open question 3: 409 or 422) | None |
+| Caller | One error body and one code table for every route | Must handle three code sets |
+| Our code | No new handlers in `app/main.py`; adapters are short | New exception classes, handlers and docs |
+| Lost detail | Partner-specific codes (e.g. 412 vs 409) | Kept |
 
-### Decision 2: keep existing routes
+**Why:** the caller of the composed operation needs to know whether to fix the input, re-authenticate, or check what happened, not which provider's code table applies. The step name in the message says which provider failed.
+**Revisit if** a caller needs to branch on a partner-specific outcome, such as an issue tracker precondition failure.
 
-Team 1's `/files/metadata`, `/files/download` and `PATCH /files` already match the memo. This is being kept as is.
+### Decision 2: import partner packages in-process, not call their HTTP services
 
-**Alternative:** move to Team 6's key-in-URL routes (`/files/{key}`). We kept `?path=` because Teams 1 and 3 already share these routes, so only one team changes instead of two, and a path containing `/` doesn't need URL encoding inside a route segment. **Revisit** if the contract adopts key-in-URL routes.
+Chosen per the TA's clarification. **Cost:** partner bugs and dependency pins become ours; the Python 3.14 upgrade (#46) was needed for their packages. **Benefit:** no network hop or second deployment to depend on; the fakes make the operation testable offline.
 
-### Decision 3: normalize paths versus reject
+### Decision 3: ⚠️ TO FILL (how the composed operation handles a failed step)
 
-Normalization (`clean_up_path`) to allow users to find a path without using an absolute path.
-
-**Alternative:** keep rejecting paths without a leading `/` (HW1 behavior). Normalizing lets a Team 6-style path (`docs/report.pdf`) work on Team 1 too. **Cost:** the returned `path` can differ from what the caller sent (we return `/docs/report.pdf`), so callers must use the path in the response. **Revisit** if the contract requires paths to be returned exactly as sent.
+Expected options: undo earlier steps (delete the event and document) versus leave them and report a partial result. The choice decides what a caller must clean up.
 
 ---
 
 ## 5. Failure behavior and operations
 
-### Error translation
+### Partner errors to our errors
 
-| Dropbox outcome | Domain exception | HTTP | Code |
-| --- | --- | --- | --- |
-| Path not found | `FileNotFoundError` | 404 | `not_found` |
-| Path already exists | `FileConflictError` | 409 (open question 3) | `conflict` |
-| Malformed path or name | `InvalidRequestError` | 400 | `invalid_request` |
-| No permission | `PermissionDeniedError` | 403 | `permission_denied` |
-| Dropbox failure or rate limit | `ProviderError` | 502 | `provider_error` |
-| Folder where a file is required (replace) | `InvalidOperationError` | 422 | `invalid_operation` |
-| Unknown route / wrong method / unexpected failure | (FastAPI) | 404 / 405 / 500 | `not_found` / `method_not_allowed` / `internal_error`. The shared proposal uses `route_not_found` for an unknown route; Team 1 still sends `not_found` (not done yet) |
-| Provider not configured | `StorageNotConfiguredError` | 503 | `provider_not_configured` |
-| File too large | `FileTooLargeError` | 413 | `file_too_large` |
+| Calendar `ErrorCode` | Issue Tracker `ErrorCode` | Our error | HTTP | Code |
+| --- | --- | --- | --- | --- |
+| `INVALID_INPUT` | `INVALID_INPUT`, `IDEMPOTENCY_KEY_REUSED` | `InvalidRequestError` | 400 | `invalid_request` |
+| `NOT_FOUND` | `NOT_FOUND` | `FileNotFoundError` | 404 | `not_found` |
+| `ACCESS_DENIED` | `ACCESS_DENIED` | `PermissionDeniedError` | 403 | `permission_denied` |
+| `PROVIDER_UNAVAILABLE` | — | `ProviderUnavailableError` | 503 | `provider_unavailable` |
+| — | `SERVICE_NOT_CONFIGURED` | `StorageNotConfiguredError` | 503 | `provider_not_configured` |
+| — | `PRECONDITION_FAILED`, `REQUEST_IN_PROGRESS` | `FileConflictError` | 409 | `conflict` |
+| `PROVIDER_ERROR`, any other exception | `PROVIDER_ERROR`, `INTERNAL_ERROR`, any other exception | `ProviderError` | 502 | `provider_error` |
+
+Missing configuration (`TEAM5_TOKEN_FILE`, any `TRELLO_*`) or an unknown `CALENDAR_IMPL`/`TRACKER_IMPL` raises `StorageNotConfiguredError` (503) before any provider call.
 
 ### Uncertain writes and retries
 
-- After a 502 or 503 on create, replace, move or delete, the outcome is unknown. The caller checks metadata before retrying.
-- **Folder delete:** Team 1 deletes a folder with one Dropbox `files_delete_v2` call. Any Dropbox failure, including its "too many files" refusal for a very large folder, returns `502 provider_error`, and the caller lists the folder to see what is left. Whether Dropbox can stop partway through a large folder is not verified; the 502 tells the caller not to assume either outcome.
-- **Retries:** Team 1 never retries an operation automatically. After a 502 or 503 the write may already have happened, so a blind retry could create a duplicate, overwrite a newer change, or delete a file the caller has since re-created. The caller decides, after checking metadata.
+- The issue tracker contract marks `provider_error` and `internal_error` as "outcome unknown": the issue may have been created. We report these as `502` and do not retry.
+- The service never retries a write inside a request. A blind retry could create a second event, document or issue.
+- ⚠️ TO FILL: how the composed operation reports an unknown outcome in one step (for example, list each step as `done`, `failed`, `undone` or `unknown`), and what the caller should check before retrying.
 
-### Configuration and credentials
+### Configuration, credentials and logging
 
-- `.env` holds `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN` (optional `DROPBOX_ACCESS_TOKEN`). `.env` is not committed.
-- The app starts without credentials; they are read when a file route needs Dropbox.
-- **Logging:** on a Dropbox failure, one `dropbox_error` line (operation, error type, Dropbox's error, Dropbox request id) and one `request_failed` line (operation, error code, status, provider involved, `X-Request-ID`). Tokens, file paths, file contents and Dropbox's free-text messages are never logged. uvicorn's own access log does print URLs, so deployment runs with `--no-access-log`.
+- All credentials are environment variables (`.env` locally, never committed): `DROPBOX_*`, `TEAM5_TOKEN_FILE` (path to Team 5's OAuth token file), `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID`.
+- ⚠️ TO FILL: where the Team 5 token file and the Trello credentials live on the OCI VM and in CI.
+- Logging stays as in HW2: one `request_failed` line per failed request with the operation, code, status and request id. Event titles, issue titles, file paths, tokens and partner messages are never logged.
 
-### Cost of each affected operation
+### Cost of the composed operation
 
-| Operation | Local work | Dropbox calls |
-| --- | --- | --- |
-| Create | Validate path, read upload | 1 (`files_upload`) |
-| Replace | Validate path, read upload | 2 (`files_get_metadata`, `files_upload`) |
-| Move | Validate two paths | 2 (`files_get_metadata`, `files_move_v2`) |
-| Delete (file or folder) | Validate path | 1 (`files_delete_v2`) |
-| List | Sort by path | 1 `files_list_folder`, plus 1 `files_list_folder_continue` per extra page |
-| Provider health | None | 1 (`users_get_current_account`, #40) |
+⚠️ TO FILL after implementation: provider calls per step. Known so far: storage upload is 1 Dropbox call ([docs/COST.md](docs/COST.md) still applies). Calendar create and issue create are one contract call each; how many provider requests each makes is inside the partner package and not measured.
 
-**Deployment (Milestone 3):** hosting is not decided yet (owner: **[name]**, decide by Nov 7). Assumptions so far: credentials come from environment variables, never from the image; Redis is optional; one Dropbox app folder per deployment.
+### Cleanup
+
+Live runs create real events, documents and issues. Smoke scripts (`scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py`) delete what they create. ⚠️ TO FILL: the cleanup rule for the composed operation's live test.
+
+### Deployment
+
+Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). ⚠️ TO FILL: `deploy-oci.yml` and `ci.yml` only reference `hw2-milestone3`, so neither CI nor deploy runs for `hw3-milestone1` today. Owner and fix needed before the operation can be "deployed".
 
 ---
 
 ## 6. Migration and coordination plan
 
-**Contract revision adopted:** tag `0.2.0`. `requirements.txt` installs `cloud_storage_api` from that tag; `move` returns its `FileInfo`, and replace and create raise its `InvalidOperationError` and `FileTooLargeError`. Route names are not in the package, so they follow the memo and the shared issues.
+**Contract revisions adopted:** storage `0.2.0` in the service (⚠️ TO FILL: decide whether to move to `0.3.1`, which the standalone package already uses), calendar `v0.1.0`, issue tracker `v1.1.0`.
 
 ### What changes
 
-| Area | Change | Compatibility effect on existing callers |
+| Area | Change | Effect on existing callers |
 | --- | --- | --- |
-| Routes | Add `PUT /files`, `GET /files`, `GET /health/provider` | None (additive) |
-| Delete | Folders are deleted recursively instead of returning 400 | A caller that relied on the 400 now deletes data. Record in release notes. |
-| Paths | Leading `/` is added instead of rejected | A request that returned 400 now succeeds |
-| Errors | No renames: `invalid_request` and `provider_error` already match the shared proposal (#4). Added `413 file_too_large` and `422 invalid_operation` | Callers that checked 400 for an oversized upload or a folder replace now get 413 or 422 |
-| Python | Python 3.14 or newer | Update `.python-version`, CI and `requirements.txt` |
-| Tests | Add tests for each new route; update `test_validation.py` and `test_delete.py` | None |
-| Docs | Update the README and add new route sections | None |
+| Python | 3.12 → 3.14 (#46) | Developers and CI need 3.14 |
+| Dependencies | Partner contract and implementation packages pinned to tags | None |
+| Configuration | New `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL`, `TRELLO_*` | Defaults are the fakes, so nothing changes until set |
+| Routes | ⚠️ TO FILL: the composed operation's route | Additive |
+| Storage routes | None | None |
 
 ### Work breakdown
 
-| PR | Owner | Depends on | Verification |
+| Work | Owner | Depends on | Verification |
 | --- | --- | --- | --- |
-| `clean_up_path` and updated validation | Laya | Path rule (open question 1) | Updated `test_validation.py` |
-| `PUT /files` replace | Annie, Shini | Open question 3 for the conflict status | Fake-storage tests, mocked Dropbox tests, one integration test |
-| `GET /files` list | Yashwanth | Path rule, open questions 4 and 5 | Same three levels, including a folder with more than one Dropbox page |
-| `GET /health/provider` | Dayana | None | Test with the fake and with bad credentials |
-| Recursive folder delete | Annie | Open question 6 | Done: `test_delete.py`, `test_dropbox_delete.py`, integration test with a nested folder |
-| Move restrictions to 422 and `route_not_found` | TODO | Shared issue #5 | Updated `test_update.py`, `test_error_style.py` |
-| Python 3.14 and package adoption | Annie | Package skeleton | CI green |
+| Calendar integration | Dayana | Python 3.14 | `tests/test_calendar_integration.py`, `scripts/smoke_team5_calendar.py` (#47) |
+| Issue tracker integration | Dayana | Calendar integration | `tests/test_issue_tracker_integration.py`, `scripts/smoke_team4_issue_tracker.py` (#48) |
+| Bring #48 into `hw3-milestone1` | ⚠️ TO FILL | — | 565 tests pass on `hw3-milestone1` |
+| Standalone Dropbox package for other teams | Yashwanth | — | `packages/team1_dropbox/tests` (#49). ⚠️ TO FILL: tag it and bring it into `hw3-milestone1` (issue #50) |
+| Composed operation (route, undo, tests) | ⚠️ TO FILL | Both integrations on `hw3-milestone1` | Fake-backed route tests, one live run |
+| CI and deploy for `hw3-milestone1` | ⚠️ TO FILL | — | Green CI run, deployed health check |
+| DESIGN.md | Shini | — | Internal and external review |
 
-### If the contract changes after implementation starts
+**Early end-to-end step:** run the composed operation once against all three real providers with the test account as soon as the route exists, before polishing tests, to catch credential and time-format problems early.
 
-The coordinator announces the change in the document-storage Slack channel. Per the memo, a breaking change needs a new tag and sign-off from all three implementation contacts (Yashwanth for Team 1). Team 1 pins to a tag, not a branch, so a change reaches us only when we adopt the new tag.
+### If a contract changes
+
+Whoever finds the problem opens an issue on the owning team's repository with a reproduction and does not patch the contract alone. We move our pin only when the owner publishes a new tag. Consumers of **our** storage package (Team 2 via issue #50, ⚠️ TO FILL: others) are told in the shared Slack channel before we publish a breaking storage tag.
+
+### Issue tracker: one behavior, two implementations
+
+The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IMPL=fake` gives `InMemoryIssueProvider` (tests and local runs); `TRACKER_IMPL=team4` gives Team 4's Trello provider. Both go through the same error mapping (`_MappedIssueProvider`), so the composed operation behaves the same with either. Switching is a startup configuration choice; there is no runtime switching. Calendar works the same way with `CALENDAR_IMPL=fake|team5`.
 
 ---
 
 ## 7. Testing
 
-### Guarantees mapped to checks
-
 | Guarantee | Check | Level |
 | --- | --- | --- |
-| Create never overwrites | `test_upload.py`; `integration/test_upload_dropbox.py` | Fake, mocked Dropbox, live Dropbox |
-| Replace never creates, even if the file is deleted mid-replace | `tests/test_replace.py` (fake), `tests/integration/test_replace_dropbox.py` (live, including `test_replace_after_delete_does_not_recreate_the_file`) | Fake, live |
-| Replace refuses a stale write | `test_dropbox_replace.py` (mocked conflict on `WriteMode.update(rev)`); `integration/test_replace_dropbox.py` (live) | Mocked Dropbox, live Dropbox |
-| Move never overwrites | `test_update.py`; `integration/test_update_dropbox.py` | Fake, live |
-| Delete removes a folder and its contents | `test_delete.py`, `test_dropbox_delete.py`, `test_cached_storage.py` (cached entries inside the folder are dropped); `integration/test_delete_dropbox.py` (nested folder) | Fake, mocked Dropbox, live |
-| List returns every page, sorted by path | `test_list.py`; `test_dropbox_list.py` (mocked `has_more=True` pages); `integration/test_list_dropbox.py` | Fake, mocked Dropbox, live |
-| Bad paths return 400 and never reach Dropbox | `test_validation.py` (update for normalization) | Fake |
-| Error body shape and codes | `test_storage_foundation.py` | Fake |
-| Dropbox failures are logged without secrets | `test_dropbox_error_logging.py` | Mocked Dropbox |
+| Config picks the right implementation, and rejects unknown or incomplete settings | `test_calendar_integration.py` (factory tests), `test_issue_tracker_integration.py` (factory tests) | Fast, no network |
+| Every partner error code maps to the documented error | `test_contract_errors_map_to_application_errors` in both files | Fast |
+| An unexpected partner exception becomes `provider_error` and names the step | `test_unexpected_error_maps_to_provider_error_with_step_name` in both files | Fast |
+| Fakes can inject a failure for one method | `test_fake_can_inject_failure_for_chosen_method`, `test_fake_supports_update_list_and_delete` | Fast |
+| The real partner packages work with our credentials | `scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py` (skip unless configured; delete what they create) | Live |
+| Storage still matches the shared contract | Shared storage conformance suite in CI ([TESTING.md](TESTING.md)) | Live, real Dropbox |
+| Composed operation: success, each step failing, undo, unknown outcome | ⚠️ TO FILL | Fast (with fakes) |
+| Composed operation against real providers | ⚠️ TO FILL | Live |
 
-Fast tests (`pytest`) need no credentials. Live tests (`pytest tests/integration -v`) need a Dropbox token, write under `/integration-tests/`, and delete what they create.
+**Conformance suites:** storage runs in our CI. ⚠️ TO FILL: whether the calendar and issue tracker verticals publish conformance suites, and whether we run them against Team 5's and Team 4's packages.
 
-### Consumer workflow (same logic for every service)
-
-Upload a file, read its metadata, download it and compare bytes, list its folder, move it, read metadata at the new path, delete it, confirm metadata returns 404.
-
-**Conformance suite:** Team 6 owns the shared suite in the contract repo. Team 1 will run it against its service with its base URL and Dropbox credentials. Fixtures create files under `/integration-tests/<random id>/` and delete that folder at the end, even when a test fails. Example of a failing check that reveals a mismatch: replace on a missing path must return `404`. If our service created the file instead, that test fails.
+**Known gaps:** no test yet covers more than one vertical in one request, and the live smoke scripts are run by hand, not in CI.
 
 ---
 
 ## 8. Open questions and review
 
-### Open questions
-
-| # | Question | Consequence for Team 1 | Owner | Next step |
+| # | Question | Consequence | Owner | Next step |
 | --- | --- | --- | --- | --- |
-| 1 | Path rule (leading `/`, max length) | `clean_up_path` behavior; we must confirm our length limit | Laya | Write the rule into the contract |
-| 3 | 409 or 422 for an existing destination | Changes create, replace and move statuses | Darsh (Team 6) | Confirm with Teams 1 and 3 |
-| 4 | How list marks folders | Shape of list entries | Yashwanth, Jing | Add `type` field or exclude folders |
-| 5 | Size of a full list | Number of Dropbox calls per list | Yashwanth | Decide cap or optional cursor |
-| 6 | Folder delete that fails partway | Status and caller guidance | All teams | Decide status |
-| 9 | Smallest accepted upload and the status above it | Settled for Team 1: 150 MiB (157,286,400 bytes), `413 file_too_large` | Teams 1 and 3 | Team 3 to confirm |
-| 11 | Versioning and approvals | Which commit we pin | Coordinator | Define the first tag |
-| 12 | Routes for download, metadata and delete | Whether our current routes change | Clause owners | Name routes in the contract draft |
-| 13 | One error code name per status | Settled for Team 1: keep `invalid_request` / `provider_error` | Darsh (#4) | Team 3 renames its codes |
+| 1 | What is the fixed-step operation? | Sections 2–7 depend on it | ⚠️ TO FILL | Team decides; update this document |
+| 2 | Undo earlier steps on failure, or report a partial result? | What the caller must clean up | ⚠️ TO FILL | Decide with question 1 |
+| 3 | Move the service from storage `0.2.0` to `0.3.1`? | Matches the package other teams install | ⚠️ TO FILL | Diff the two tags |
+| 4 | How do CI and deploy run for `hw3-milestone1`? | Milestone requires a deployed operation | ⚠️ TO FILL | Update `ci.yml` and `deploy-oci.yml` |
+| 5 | Where do partner credentials live on the VM? | Deployment cannot call Team 4 and 5 without them | ⚠️ TO FILL | — |
+
+**Contract mismatches reported to partner teams:** ⚠️ TO FILL (issue link and reproduction for each).
 
 ### Review log
 
 | Reviewer | Comment | Response | Outcome |
 | --- | --- | --- | --- |
-| noobui-omen (Team 6), on #32 | Keep `invalid_request` and `provider_error` | Rename proposal removed from sections 5 and 6 | Changed |
-| noobui-omen (Team 6), on #32 | Update template-tag references; describe package adoption | Header and section 6 now pin `0.2.0` and say which shared types the code uses | Changed |
-| noobui-omen (Team 6), on #32 | Align metadata fields and UTC `Z` with `FileInfo` | Already in code (#37); section 3 updated and a new response observed Nov 11 | Changed |
-| noobui-omen (Team 6), on #32 | Exact byte limit, MB/MiB, 413 | 157,286,400 bytes, `413 file_too_large` (#39) | Changed |
-| noobui-omen (Team 6), on #32 | Record Move restrictions and framework error codes | Route table and error table record today's 400 and `not_found` and the proposed 422 and `route_not_found` | Deferred (owner TODO, Milestone 3) |
-| noobui-omen (Team 6), on #32 | "Replace never creates" vs a concurrent delete | `strict_conflict=True` refuses the write; evidence: `test_replace_after_delete_does_not_recreate_the_file` (live) | Explained |
+| ⚠️ TO FILL | | | Changed / Explained / Accepted risk / Deferred (owner, date) |
 
 ---
 
@@ -297,12 +285,15 @@ Upload a file, read its metadata, download it and compare bytes, list its folder
 
 | Task | Owner | Output | Depends on | Target |
 | --- | --- | --- | --- | --- |
-| Internal review | TODO | PR comments | Draft complete | Mon Nov 2 evening |
-| External review of sections 3 and 6 | noobui-omen (Team 6) | Comments on #32, answered in the review log | Draft complete | Done Nov 11 |
+| Decide the composed operation | ⚠️ TO FILL | Sections 2–7 updated | — | Nov 18 |
+| Merge the issue tracker into `hw3-milestone1` | ⚠️ TO FILL | PR | — | Nov 18 |
+| Build and test the composed operation | ⚠️ TO FILL | PR | Two items above | Nov 18 |
+| CI and deploy for `hw3-milestone1` | ⚠️ TO FILL | Green run, deployed health check | — | Nov 18 |
+| Internal review of this document | ⚠️ TO FILL | PR comments | Draft complete | Nov 18 |
+| External review of sections 3, 6 and 7 | ⚠️ TO FILL | PR comments, answered in the review log | Draft complete | ⚠️ TO FILL |
 
-## Changes during implementation
+## Change record
 
-- **Replace on a folder returns `422 invalid_operation`, not `400`.** The shared contract (`cloud_storage_api` 0.2.0) defines `InvalidOperationError` for valid input the contract forbids, and a folder path is valid input. Shini's replace (`PUT /files`) was ported onto `hw2-milestone3` with this change.
-- **Folder delete is one Dropbox call.** We had planned to check the path first. Dropbox's `files_delete_v2` already removes a folder with everything inside it, so the extra `files_get_metadata` call was dropped: a file delete now costs 1 Dropbox call instead of 2.
-- **The metadata cache drops entries inside a deleted folder.** Before, a delete only removed the entry for the path itself, which was enough while folders couldn't be deleted. Now every cached entry below the folder is removed too, so a deleted folder's files don't keep answering `200` from Redis until their TTL runs out.
-- **Create and replace return `413 file_too_large` above 150 MiB, not `400`.** The shared contract added `FileTooLargeError` (413), so open question 9 is settled for Team 1. The limit stays 150 MiB because that is the most Dropbox's `files_upload` accepts in one call.
+| Date | What changed | Why |
+| --- | --- | --- |
+| Nov 18, 2026 | HW3 design started; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
