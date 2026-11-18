@@ -9,7 +9,7 @@
 | **Team / vertical** | Team 1, Document Storage (Dropbox): Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni |
 | **Internal reviewer** | Annie Jain (comments answered in the review log, section 8) |
 | **External reviewer** (contract-facing parts: sections 3, 6 and 7) | Kristie Lee (Team 5, consumer of our storage package). Review requested Nov 18; comments go in the review log, section 8 |
-| **Status** | Draft |
+| **Status** | In review |
 | **Last updated** | Nov 18, 2026 |
 | **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (standalone package). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
 | **Implementations used** | Storage: ours (Dropbox). Calendar: Team 5 [`team5-calendar-v0.1.0`](https://github.com/juno-junhyuk-lee/OSPSD-Team-5) (Google Calendar). Issue Tracker: Team 4 [`team-4-issue-tracker-trello-v1.0.0`](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) (Trello) |
@@ -43,7 +43,7 @@ What makes this hard, concretely:
 1. One deployed API operation runs fixed steps across storage, calendar and issue tracker for one test account and returns the ids it created.
 2. Every failure, from any step, uses our one error body and names the step. A write whose result is unknown is reported as unknown, never as "nothing happened".
 3. Each partner implementation is replaced by configuration only (`CALENDAR_IMPL=fake|team5`, `TRACKER_IMPL=fake|team4`). The same operation runs unchanged against the in-memory fakes and the real providers.
-4. Existing storage routes behave as in HW2 and keep passing the shared storage conformance suite (shared PR #6, run by our CI on `hw2-milestone3` today; see section 7).
+4. Existing storage routes behave as in HW2 and keep passing the shared storage conformance suite (shared PR #6, run by our CI on `hw2-milestone3` and `hw3-milestone1` since #52; see section 7).
 
 ### Non-goals
 
@@ -240,12 +240,12 @@ Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLO
 
 **Exposure risk:** the deployed API has **no caller authentication**. Anyone who knows the address can create, read and delete files in our Dropbox app folder. Accepted for now because the folder holds only test data and the address is shared only with partner teams; it must be closed before real users (Milestone 2 requires user isolation and authorization).
 
-On `hw3-milestone1` today:
+**CI and deploy for `hw3-milestone1` (fixed in #52, merged Nov 18):**
 
-- `ci.yml` runs only for pushes and PRs on `hw2-milestone3`, so **no CI runs for `hw3-milestone1`**, including the storage conformance job.
-- `deploy-oci.yml` runs on **any** `deploy-oci-*` tag, but the remote script hard-codes `git fetch origin hw2-milestone3` and `git switch hw2-milestone3`. A tag on an HW3 commit therefore cannot deploy HW3: the script's check that `hw2-milestone3` points at the tagged commit fails ("Branch changed since workflow started"). If both happened to point at the same commit, it would deploy from the HW2 branch.
+- `ci.yml` runs on pushes and PRs for both `hw2-milestone3` and `hw3-milestone1`: tests, lint, types, Docker build and the storage conformance job. #52's own run passed all of them ([run](https://github.com/Dayana20/sandbox/actions/runs/44392065663)).
+- `deploy-oci.yml` now fetches and switches to `hw3-milestone1`. Before #52 it hard-coded `hw2-milestone3`, so a tag on an HW3 commit failed its branch check ("Branch changed since workflow started").
 
-Both workflows must name `hw3-milestone1` before the operation can be deployed from it (open question 4).
+HW3 code reaches the VM when a reviewed commit on `hw3-milestone1` gets a `deploy-oci-*` tag and the VM's `.env` has the partner settings (section 5, credentials). Until then the deployed service is the HW2 one.
 
 ---
 
@@ -272,7 +272,7 @@ Both workflows must name `hw3-milestone1` before the operation can be deployed f
 | Bring #48 into `hw3-milestone1` | Shini (found), Annie (merged) | — | Done in #53; 563 tests pass on `hw3-milestone1` |
 | Standalone Dropbox package | Yashwanth | — | `packages/team1_dropbox/tests` (#49, merged into `hw2-milestone3`); still needs a tag and to reach `hw3-milestone1` (issue #50) |
 | Composed operation (route, undo, tests) | Shini | — (both integrations are on `hw3-milestone1`) | Fake-backed route tests, one live run |
-| CI and deploy for `hw3-milestone1` | Unassigned (Yashwanth built the deploy workflow) | — | Green CI run, deployed `/health` |
+| CI and deploy for `hw3-milestone1` | Shini | — | Done in #52; CI green on `hw3-milestone1`. Deploying HW3 still needs a tag (Yashwanth) |
 | DESIGN.md | Shini | — | Internal and external review |
 
 **Early end-to-end step:** run the composed operation once against all three real providers with the test account as soon as the route exists, before polishing tests. That catches credential, list-id and time-format problems early.
@@ -301,7 +301,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Composed operation against real providers | Recorded runs in [docs/HW3-M1-EVIDENCE.md](docs/HW3-M1-EVIDENCE.md): real Dropbox; Team 4's real Trello package with bad credentials (undo verified in Dropbox). A run with valid Team 4 and Team 5 credentials is still to do | Live |
 
 **Conformance suites**
-- **Storage:** the shared suite lives in [ospsd26-cloud-storage PR #6](https://github.com/Dayana20/ospsd26-cloud-storage/pull/6), which is **still open**; the contract repo's `main` has no `conformance/` folder yet. Our CI checks out that PR at a pinned commit (`b77617c`) and runs it against real Dropbox, but only on `hw2-milestone3`: 51/55 pass, the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)). Nothing runs it for `hw3-milestone1` until `ci.yml` names that branch.
+- **Storage:** the shared suite lives in [ospsd26-cloud-storage PR #6](https://github.com/Dayana20/ospsd26-cloud-storage/pull/6), which is **still open**; the contract repo's `main` has no `conformance/` folder yet. Our CI checks out that PR at a pinned commit (`b77617c`) and runs it against real Dropbox on `hw2-milestone3` and, since #52, on `hw3-milestone1` (passed on #52's [run](https://github.com/Dayana20/sandbox/actions/runs/44392065663)): 51/55 pass, the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)).
 - **Calendar:** `calendar_contract.conformance.CalendarServiceConformance` ships with the contract; a test subclasses it and provides two fixtures, `service` and `failing_service` (a factory for an implementation whose provider fails every call). **Proposed:** run it against `InMemoryCalendarService` so our fake is held to the same rules as Team 5.
 - **Issue tracker:** Team 4 keeps its suite in `contract/tests/conformance` and runs it against its providers.
 - A mismatch would show up as a failing conformance test, for example our fake accepting a timestamp without an offset that the contract rejects.
@@ -324,7 +324,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | 1 | Is `POST /workflows/meeting` the fixed-step operation? | Sections 2–7 describe it | Shini (built it) | Resolved: built on `shini/hw3-workflow`; team approves in the PR |
 | 2 | Undo earlier steps on failure (Decision 3)? | What the caller must clean up | Same as 1 | Decide with question 1 |
 | 3 | Stay on storage `0.2.0` or move to `0.3.1`? | Only adds streaming methods with defaults | Same as 1 | Proposed: stay for M1 |
-| 4 | CI and deploy for `hw3-milestone1` | No CI runs for HW3 code, and a deploy tag on HW3 code fails the branch check (section 5) | Unassigned | Name `hw3-milestone1` in `ci.yml` and in the fetch/switch lines of `deploy-oci.yml` |
+| 4 | CI and deploy for `hw3-milestone1` | Was: no CI for HW3 code, and a deploy tag on HW3 code failed the branch check | Shini | Resolved by #52 (merged Nov 18) |
 | 5 | Partner credentials on the VM and in CI | The deployment cannot call Teams 4 and 5 without them | Unassigned | See section 5 |
 | 6 | Tag the `team1_dropbox` package for Teams 5 and 2 | They install from a moving branch today | Yashwanth | Tag a reviewed commit and share the pin (issue #50) |
 | 7 | Caller authentication on the deployed API | Anyone with the address can change our test folder | Unassigned | Required before Milestone 2 users |
@@ -334,8 +334,8 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Reviewer | Comment | Response | Outcome |
 | --- | --- | --- | --- |
 | Annie (internal) | A 246–256 character title passes validation, then Trello rejects `"Follow up: " + title` after the event and document exist | Title capped at 245 so the issue title fits 256; checked before any provider call | Changed |
-| Annie (internal) | Deploying `hw3-milestone1` would deploy `hw2-milestone3` | Checked `deploy-oci.yml`: it hard-codes `hw2-milestone3`, and its SHA check makes a deploy from an HW3 tag fail rather than deploy HW2. Section 5 now states this; fix tracked as open question 4 | Changed |
-| Annie (internal) | The storage conformance suite is not in the shared repo, and CI does not run it for `hw3-milestone1` | Section 7 and Goal 4 now say it lives in open PR #6 and runs only on `hw2-milestone3` | Changed |
+| Annie (internal) | Deploying `hw3-milestone1` would deploy `hw2-milestone3` | Checked `deploy-oci.yml`: it hard-coded `hw2-milestone3`, and its SHA check made a deploy from an HW3 tag fail rather than deploy HW2. Fixed in #52: the workflow now uses `hw3-milestone1` | Changed |
+| Annie (internal) | The storage conformance suite is not in the shared repo, and CI does not run it for `hw3-milestone1` | Section 7 and Goal 4 say it lives in open PR #6; since #52 CI runs it on `hw3-milestone1` too (green on #52's run) | Changed |
 | Annie (internal) | Goal 2 promises "unknown" outcomes, but the adapters drop `may_have_applied` and `retryable` | Section 5: the adapters will keep that information to mark a step `unknown` | Changed |
 | Annie (internal) | Storage error class names are misleading for calendar and issue errors | Added as a cost to Decision 1, with a rename follow-up | Accepted risk, follow-up in Milestone 2 |
 | Annie (internal) | "Pinned in `requirements.txt`" contradicts #48 not being merged | Sections 2 and 3 now say the issue tracker pins arrive with #48; resolved when #53 brought #48 into `hw3-milestone1` | Changed |
@@ -349,7 +349,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Live run with Team 5 and Team 4 credentials | ⚠️ TBD (whoever holds the credentials) | Section 1 of the evidence file updated | Workflow PR merged | Nov 18 |
 | Merge the issue tracker into `hw3-milestone1` | Annie | #53 | — | Done Nov 18 |
 | Build and test the composed operation | Shini | `shini/hw3-workflow`, evidence file | — | Done Nov 18 |
-| CI and deploy for `hw3-milestone1` | Unassigned | Green run, deployed `/health` | — | Nov 18 |
+| CI and deploy for `hw3-milestone1` | Shini | #52, green CI | — | Done Nov 18 |
 | Internal review of this document | Annie | 6 comments, all answered in the review log | Draft complete | Done Nov 18 |
 | External review of sections 3, 6 and 7 | Kristie Lee (Team 5) | PR comments, answered in the review log | Draft complete | Before Milestone 2 |
 
@@ -362,3 +362,4 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Nov 18, 2026 | Added our storage consumers (Teams 5 and 2), the mismatch Team 5 reported and its fix, the deployed endpoint's exposure risk, and package tagging | Team 1–Team 5 Slack thread |
 | Nov 18, 2026 | Issue tracker now on `hw3-milestone1` via #53 | #48 had been merged into the wrong branch |
 | Nov 18, 2026 | Composed operation built; traces, testing and actions updated; evidence linked | `POST /workflows/meeting` implemented |
+| Nov 18, 2026 | Status → In review; CI and deploy statements updated after #52 merged | Annie's second review |
