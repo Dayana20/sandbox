@@ -82,6 +82,12 @@ Trello card: Follow up: HW3 full live test                            (Team 4 ge
 Dropbox doc first line: # HW3 full live test                          (Dropbox files_download)
 ```
 
+The same three items as they appeared in each service before cleanup (cropped to the item):
+
+| Google Calendar (Team 5) | Trello (Team 4) | Dropbox (ours) |
+| --- | --- | --- |
+| ![Event in Google Calendar](images/hw3-m1-calendar.png) | ![Card on the Trello board](images/hw3-m1-trello.png) | ![Notes document in Dropbox](images/hw3-m1-dropbox.png) |
+
 All three were deleted afterwards. The credentials (Google token file, Trello key and token) live outside the repository and are not shown here.
 
 ## 2. Switching implementations through configuration
