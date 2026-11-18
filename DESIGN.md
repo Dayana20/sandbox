@@ -8,7 +8,7 @@
 | **Authors** | Shini Agarwal (document). Integration code by Dayana Alejandro (#46, #47, #48) and Yashwanth Kasanneni (#49, deployment) |
 | **Team / vertical** | Team 1, Document Storage (Dropbox): Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni |
 | **Internal reviewer** | Annie Jain (comments answered in the review log, section 8) |
-| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TBD (one reviewer from another team; Kristie Lee from Team 5, who consumes our package, is a natural fit) |
+| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | Kristie Lee (Team 5, consumer of our storage package). Review requested Nov 18; comments go in the review log, section 8 |
 | **Status** | Draft |
 | **Last updated** | Nov 18, 2026 |
 | **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (standalone package). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
@@ -352,7 +352,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Build and test the composed operation | Unassigned | PR, observed response in section 3 | Two rows above | Nov 18 |
 | CI and deploy for `hw3-milestone1` | Unassigned | Green run, deployed `/health` | — | Nov 18 |
 | Internal review of this document | Annie | 6 comments, all answered in the review log | Draft complete | Done Nov 18 |
-| External review of sections 3, 6 and 7 | External reviewer | PR comments, answered in the review log | Draft complete | Before Milestone 2 |
+| External review of sections 3, 6 and 7 | Kristie Lee (Team 5) | PR comments, answered in the review log | Draft complete | Before Milestone 2 |
 
 ## Change record
 
