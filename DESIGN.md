@@ -1,6 +1,6 @@
 # DESIGN: Team 1 composes Storage, Calendar and Issue Tracker (HW3 Milestone 1)
 
-> **⚠️ TBD** marks the few points the team has not decided yet. Everything else describes the code on `hw3-milestone1` (plus #48) as of Nov 18, 2026, or is labelled **Proposed**.
+> **⚠️ TBD** marks the few points the team has not decided yet. Everything else describes the code on `hw3-milestone1` (at `2cb5056`, after #53) as of Nov 18, 2026, or is labelled **Proposed**.
 
 | | |
 | --- | --- |
@@ -14,7 +14,7 @@
 | **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (standalone package). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
 | **Implementations used** | Storage: ours (Dropbox). Calendar: Team 5 [`team5-calendar-v0.1.0`](https://github.com/juno-junhyuk-lee/OSPSD-Team-5) (Google Calendar). Issue Tracker: Team 4 [`team-4-issue-tracker-trello-v1.0.0`](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) (Trello) |
 | **Decision memo** | HW2 storage memo, linked from [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md) |
-| **Implementation work** | #46 (Python 3.14), #47 (calendar), #48 (issue tracker), #49 (standalone Dropbox package), #50 (package request from Team 2) |
+| **Implementation work** | #46 (Python 3.14), #47 (calendar), #48 and #53 (issue tracker), #49 (standalone Dropbox package), #50 (package request from Team 2) |
 
 The HW2 design (how our service adopted the shared storage contract) is kept in [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md).
 
@@ -60,10 +60,10 @@ What makes this hard, concretely:
 
 | Component | File | Responsibility | Status |
 | --- | --- | --- | --- |
-| Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract`, pinned in `requirements.txt` (issue tracker: only after #48 reaches `hw3-milestone1`) | Types, interfaces and error codes we code against | Storage and calendar on `hw3-milestone1`; issue tracker on `hw3-integrate-calendar-api` |
-| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Call Google Calendar and Trello | Same as above |
+| Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract`, pinned in `requirements.txt` | Types, interfaces and error codes we code against | Installed |
+| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Call Google Calendar and Trello | Installed |
 | Calendar adapter | `app/integrations/calendar.py` | `get_calendar_service()` picks the implementation from `CALENDAR_IMPL`; `_MappedCalendarService` maps `CalendarError` codes to our errors; `InMemoryCalendarService` is the fake | Done (#47) |
-| Issue tracker adapter | `app/integrations/issue_tracker.py` | `get_issue_provider()` picks from `TRACKER_IMPL`; `_MappedIssueProvider` maps `ServiceError` codes; `InMemoryIssueProvider` is the fake | Done (#48), but #48 was merged into `hw3-integrate-calendar-api` after #47 had merged, so it is **not on `hw3-milestone1` yet** |
+| Issue tracker adapter | `app/integrations/issue_tracker.py` | `get_issue_provider()` picks from `TRACKER_IMPL`; `_MappedIssueProvider` maps `ServiceError` codes; `InMemoryIssueProvider` is the fake | Done (#48). #48 was first merged into `hw3-integrate-calendar-api` after #47 had merged, so it reached `hw3-milestone1` only through #53 (Nov 18) |
 | Storage | `app/providers/dropbox/`, `app/dependencies.py` | Unchanged from HW2 | Done |
 | Composed operation | **Proposed:** `app/api/routes/workflows.py` | Runs the fixed steps, undoes earlier steps on failure, returns all ids | Not built |
 | Error handling | `app/main.py`, `app/errors.py` | Domain errors to the HTTP error body | Done |
@@ -113,7 +113,7 @@ Step 4 fails because Trello rejects the token.
 
 ## 3. API and data model
 
-**Authoritative contracts:** the three contract packages, linked in the header and pinned in `requirements.txt` (the issue tracker pins arrive with #48). The HTTP shape of our storage routes is the one the shared storage conformance suite tests ([TESTING.md](TESTING.md)).
+**Authoritative contracts:** the three contract packages, linked in the header and pinned in `requirements.txt`. The HTTP shape of our storage routes is the one the shared storage conformance suite tests ([TESTING.md](TESTING.md)).
 
 | Topic | Choice |
 | --- | --- |
@@ -270,9 +270,9 @@ Both workflows must name `hw3-milestone1` before the operation can be deployed f
 | --- | --- | --- | --- |
 | Calendar integration | Dayana | Python 3.14 | `tests/test_calendar_integration.py`, `scripts/smoke_team5_calendar.py` (#47, merged) |
 | Issue tracker integration | Dayana | Calendar integration | `tests/test_issue_tracker_integration.py`, `scripts/smoke_team4_issue_tracker.py` (#48) |
-| Bring #48 into `hw3-milestone1` | Unassigned | — | One PR from `hw3-integrate-calendar-api`; 565 tests pass |
+| Bring #48 into `hw3-milestone1` | Shini (found), Annie (merged) | — | Done in #53; 563 tests pass on `hw3-milestone1` |
 | Standalone Dropbox package | Yashwanth | — | `packages/team1_dropbox/tests` (#49, merged into `hw2-milestone3`); still needs a tag and to reach `hw3-milestone1` (issue #50) |
-| Composed operation (route, undo, tests) | Unassigned | #48 on `hw3-milestone1` | Fake-backed route tests, one live run |
+| Composed operation (route, undo, tests) | Unassigned | — (both integrations are on `hw3-milestone1`) | Fake-backed route tests, one live run |
 | CI and deploy for `hw3-milestone1` | Unassigned (Yashwanth built the deploy workflow) | — | Green CI run, deployed `/health` |
 | DESIGN.md | Shini | — | Internal and external review |
 
@@ -339,7 +339,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Annie (internal) | The storage conformance suite is not in the shared repo, and CI does not run it for `hw3-milestone1` | Section 7 and Goal 4 now say it lives in open PR #6 and runs only on `hw2-milestone3` | Changed |
 | Annie (internal) | Goal 2 promises "unknown" outcomes, but the adapters drop `may_have_applied` and `retryable` | Section 5: the adapters will keep that information to mark a step `unknown` | Changed |
 | Annie (internal) | Storage error class names are misleading for calendar and issue errors | Added as a cost to Decision 1, with a rename follow-up | Accepted risk, follow-up in Milestone 2 |
-| Annie (internal) | "Pinned in `requirements.txt`" contradicts #48 not being merged | Sections 2 and 3 now say the issue tracker pins arrive with #48 | Changed |
+| Annie (internal) | "Pinned in `requirements.txt`" contradicts #48 not being merged | Sections 2 and 3 now say the issue tracker pins arrive with #48; resolved when #53 brought #48 into `hw3-milestone1` | Changed |
 
 ---
 
@@ -348,7 +348,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Task | Owner | Output | Depends on | Target |
 | --- | --- | --- | --- | --- |
 | Confirm the composed operation | Team | Question 1 closed | — | Nov 18 |
-| Merge the issue tracker into `hw3-milestone1` | Unassigned | PR | — | Nov 18 |
+| Merge the issue tracker into `hw3-milestone1` | Annie | #53 | — | Done Nov 18 |
 | Build and test the composed operation | Unassigned | PR, observed response in section 3 | Two rows above | Nov 18 |
 | CI and deploy for `hw3-milestone1` | Unassigned | Green run, deployed `/health` | — | Nov 18 |
 | Internal review of this document | Annie | 6 comments, all answered in the review log | Draft complete | Done Nov 18 |
@@ -361,3 +361,4 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Nov 18, 2026 | HW3 design written; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
 | Nov 18, 2026 | Title capped at 245; deploy and CI branch problem, conformance location, unknown outcomes, error naming and pins clarified | Annie's internal review |
 | Nov 18, 2026 | Added our storage consumers (Teams 5 and 2), the mismatch Team 5 reported and its fix, the deployed endpoint's exposure risk, and package tagging | Team 1–Team 5 Slack thread |
+| Nov 18, 2026 | Issue tracker now on `hw3-milestone1` via #53 | #48 had been merged into the wrong branch |
