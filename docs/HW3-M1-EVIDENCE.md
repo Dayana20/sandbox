@@ -2,7 +2,7 @@
 
 The composed operation is `POST /workflows/meeting`: it creates a calendar event (calendar vertical), saves a notes document for it (storage vertical, ours), and opens a follow-up issue (issue tracker vertical). Design: [DESIGN.md](../DESIGN.md).
 
-Everything below was run on Nov 18, 2026 against branch `shini/hw3-workflow` (on top of `hw3-milestone1` at `8af9112`). Storage was **real Dropbox** in every run. Ids are from test data that was deleted afterwards; no credentials appear here.
+Everything below was run on Nov 18, 2026. Sections 1–4 ran on branch `shini/hw3-workflow` (on top of `hw3-milestone1` at `8af9112`); sections 1b and 1c on `hw3-milestone1` at `b9a6547` after it merged. Storage was **real Dropbox** in every run; section 1c uses the real calendar and issue tracker too. Ids are from test data that was deleted afterwards; no credentials appear here.
 
 ## How to run it
 
@@ -50,7 +50,45 @@ HTTP/1.1 400 Bad Request
 {"error":{"code":"invalid_request","message":"title, start and end must be a non-empty title and RFC 3339 times with an offset, with end after start"}}
 ```
 
-**Not yet run:** the same request with `CALENDAR_IMPL=team5` and `TRACKER_IMPL=team4` and valid credentials for the test account. That run needs Team 5's token file and the Trello settings; see "Still to do".
+### 1b. With Team 4's real Trello implementation
+
+Same request on `hw3-milestone1` at `b9a6547`, with `TRACKER_IMPL=team4` and valid Trello settings for our test board (`CALENDAR_IMPL=fake`, real Dropbox):
+
+```
+HTTP/1.1 201 Created
+{"event":{"id":"5ea6353ac0564767a27972bd96128f5a","title":"HW3 live test","start":"2026-11-20T15:00:00-05:00","end":"2026-11-20T15:30:00-05:00"},
+ "document":{"id":"id:QqRAUO3-OU4AAAAAAAAINA","name":"5ea6353ac0564767a27972bd96128f5a.md","path":"/meetings/5ea6353ac0564767a27972bd96128f5a.md","size":147,"modified_at":"2026-11-18T22:08:01Z","etag":"01660943e8f91070000000391630f83","type":null},
+ "issue":{"id":"6afe21c1da6f219b72798d76","title":"Follow up: HW3 live test"}}
+```
+
+The issue id is a real Trello card id. Reading it back through Team 4's provider (`get_issue`) returned the title `Follow up: HW3 live test`. The card and the Dropbox document were then deleted.
+
+### 1c. All three real implementations
+
+Same request on `hw3-milestone1` at `b9a6547` with **every vertical real**: `CALENDAR_IMPL=team5` (Team 5's package, Google Calendar, our own test Google account authorized with `python -m team5_calendar.authorize`), `TRACKER_IMPL=team4` (Team 4's package, our Trello board) and our Dropbox:
+
+```
+HTTP/1.1 201 Created
+{"event":{"id":"35s47dnsl44qchkmds3ob6c44c","title":"HW3 full live test","start":"2026-11-20T15:00:00-05:00","end":"2026-11-20T15:30:00-05:00"},
+ "document":{"id":"id:QqRAUO3-OU4AAAAAAAAINg","name":"35s47dnsl44qchkmds3ob6c44c.md","path":"/meetings/35s47dnsl44qchkmds3ob6c44c.md","size":146,"modified_at":"2026-11-18T22:26:34Z","etag":"016609480e970320000000391630f83","type":null},
+ "issue":{"id":"6afe261a4d1389917f8cac45","title":"Follow up: HW3 full live test"}}
+```
+
+Each item was then read back through its own provider:
+
+```
+Google Calendar event: HW3 full live test 2026-11-20T15:00:00-05:00   (Team 5 calendar.get)
+Trello card: Follow up: HW3 full live test                            (Team 4 get_issue)
+Dropbox doc first line: # HW3 full live test                          (Dropbox files_download)
+```
+
+The same three items as they appeared in each service before cleanup (cropped to the item):
+
+| Google Calendar (Team 5) | Trello (Team 4) | Dropbox (ours) |
+| --- | --- | --- |
+| ![Event in Google Calendar](images/hw3-m1-calendar.png) | ![Card on the Trello board](images/hw3-m1-trello.png) | ![Notes document in Dropbox](images/hw3-m1-dropbox.png) |
+
+All three were deleted afterwards. The credentials (Google token file, Trello key and token) live outside the repository and are not shown here.
 
 ## 2. Switching implementations through configuration
 
@@ -95,5 +133,4 @@ mypy app    no issues found in 41 source files
 
 ## Still to do
 
-- Live run with `CALENDAR_IMPL=team5` and `TRACKER_IMPL=team4` and valid test-account credentials; replace section 1's output with it.
 - Deploy this branch (merge into `hw3-milestone1`, push a `deploy-oci-*` tag; see [DEPLOYMENT.md](DEPLOYMENT.md)) and set `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL` and `TRELLO_*` in the VM's `.env`.
