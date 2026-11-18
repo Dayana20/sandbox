@@ -1,6 +1,6 @@
 # DESIGN: Team 1 composes Storage, Calendar and Issue Tracker (HW3 Milestone 1)
 
-> **⚠️ TBD** marks the few points the team has not decided yet. Everything else describes the code on `hw3-milestone1` (at `2cb5056`, after #53) as of Nov 18, 2026, or is labelled **Proposed**.
+> **⚠️ TBD** marks the few points the team has not decided yet. Everything else describes the code on `hw3-milestone1` (at `b9a6547`, after #55) as of Nov 18, 2026, or is labelled **Proposed**.
 
 | | |
 | --- | --- |
@@ -298,7 +298,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | The real partner packages work with our credentials | `scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py` (skip unless configured; delete what they create) | Live, run by hand |
 | Storage still matches the shared contract | Shared storage conformance suite in CI ([TESTING.md](TESTING.md)) | Live, real Dropbox |
 | Composed operation: success, each step failing, undo, unknown outcome, failed undo, config selection | `tests/test_workflow_meeting.py` (17 tests) | Fast |
-| Composed operation against real providers | Recorded runs in [docs/HW3-M1-EVIDENCE.md](docs/HW3-M1-EVIDENCE.md): real Dropbox; Team 4's real Trello package with bad credentials (undo verified in Dropbox). A run with valid Team 4 and Team 5 credentials is still to do | Live |
+| Composed operation against real providers | [docs/HW3-M1-EVIDENCE.md](docs/HW3-M1-EVIDENCE.md): section 1c, all three real (Team 5 Google Calendar, Team 4 Trello, our Dropbox), each item read back through its provider; section 1b, real Trello; section 3, Team 4's real Trello package failing with bad credentials, with the Dropbox document undone | Live |
 
 **Conformance suites**
 - **Storage:** the shared suite lives in [ospsd26-cloud-storage PR #6](https://github.com/Dayana20/ospsd26-cloud-storage/pull/6), which is **still open**; the contract repo's `main` has no `conformance/` folder yet. Our CI checks out that PR at a pinned commit (`b77617c`) and runs it against real Dropbox on `hw2-milestone3` and, since #52, on `hw3-milestone1` (passed on #52's [run](https://github.com/Dayana20/sandbox/actions/runs/44392065663)): 51/55 pass, the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)).
@@ -311,9 +311,9 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Direction | Mismatch | Reproduction | Resolution |
 | --- | --- | --- | --- |
 | Reported **to us** by Team 5 (Nov 16) | Installing our service from `hw2-milestone3` (commit `6567b26`) builds a package named `app==0.0.0`, which collides with the consumer's own `app` namespace; and our storage interface exposes `upload()` instead of the shared contract's `create()` | `pip install` of the repo at `6567b26`, then `import app` in Team 5's project | Fixed by the standalone package (#49): import namespace `team1_dropbox`, class `Team1DropboxStorage` implementing `cloud_storage_api` `0.3.1` `DocumentStorage` (`create`, `replace`, …). Team 5 is integrating it |
-| Found by us in Team 4 or Team 5 packages | None so far | — | The partner packages have not yet been run live from our service, so this is not evidence of compatibility; the smoke scripts and the early end-to-end step check it |
+| Found by us in Team 4 or Team 5 packages | None | Full live run through both packages (evidence section 1c) | Both packages behaved as their contracts describe for create and get; none to report |
 
-**Known gaps:** no recorded run with valid Team 5 and Team 4 credentials yet, and the live runs and smoke scripts are not in CI.
+**Known gaps:** the live runs and smoke scripts are run by hand, not in CI, because CI has no Google or Trello credentials.
 
 ---
 
@@ -346,7 +346,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 
 | Task | Owner | Output | Depends on | Target |
 | --- | --- | --- | --- | --- |
-| Live run with Team 5 and Team 4 credentials | ⚠️ TBD (whoever holds the credentials) | Section 1 of the evidence file updated | Workflow PR merged | Nov 18 |
+| Live run with Team 5 and Team 4 credentials | Shini (own Google and Trello test accounts) | Evidence sections 1b and 1c | Workflow PR merged | Done Nov 18 |
 | Merge the issue tracker into `hw3-milestone1` | Annie | #53 | — | Done Nov 18 |
 | Build and test the composed operation | Shini | `shini/hw3-workflow`, evidence file | — | Done Nov 18 |
 | CI and deploy for `hw3-milestone1` | Shini | #52, green CI | — | Done Nov 18 |
@@ -363,3 +363,4 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Nov 18, 2026 | Issue tracker now on `hw3-milestone1` via #53 | #48 had been merged into the wrong branch |
 | Nov 18, 2026 | Composed operation built; traces, testing and actions updated; evidence linked | `POST /workflows/meeting` implemented |
 | Nov 18, 2026 | Status → In review; CI and deploy statements updated after #52 merged | Annie's second review |
+| Nov 18, 2026 | Full live run recorded (Team 5 Google Calendar, Team 4 Trello, our Dropbox) | Credentials set up with our own test accounts |
