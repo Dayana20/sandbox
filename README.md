@@ -9,6 +9,10 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PUT /files` (replace), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built. `GET /health/provider` checks whether the Dropbox connection is up using the lightweight `users_get_current_account()` call; `/health/storage` remains as an alias.
 
 
+## Composed workflow (HW3)
+
+`POST /workflows/meeting` with `{"title", "start", "end"}` creates a calendar event, saves a notes document for it at `/meetings/<event-id>.md`, and opens the issue `Follow up: <title>`. It returns `201` with all three. If a step fails, earlier steps are undone and the error says which step failed. The calendar and issue tracker implementations are chosen with `CALENDAR_IMPL=fake|team5` and `TRACKER_IMPL=fake|team4`. How to run it and recorded runs: [docs/HW3-M1-EVIDENCE.md](docs/HW3-M1-EVIDENCE.md). Design: [DESIGN.md](DESIGN.md).
+
 ## Base
 
 `DocumentStorage` (`app/providers/base.py`) is the interface between the service and the storage provider. Routes only use this; they don't know Dropbox is behind it.
