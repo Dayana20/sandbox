@@ -50,7 +50,20 @@ HTTP/1.1 400 Bad Request
 {"error":{"code":"invalid_request","message":"title, start and end must be a non-empty title and RFC 3339 times with an offset, with end after start"}}
 ```
 
-**Not yet run:** the same request with `CALENDAR_IMPL=team5` and `TRACKER_IMPL=team4` and valid credentials for the test account. That run needs Team 5's token file and the Trello settings; see "Still to do".
+### 1b. With Team 4's real Trello implementation
+
+Same request on `hw3-milestone1` at `b9a6547`, with `TRACKER_IMPL=team4` and valid Trello settings for our test board (`CALENDAR_IMPL=fake`, real Dropbox):
+
+```
+HTTP/1.1 201 Created
+{"event":{"id":"5ea6353ac0564767a27972bd96128f5a","title":"HW3 live test","start":"2026-11-20T15:00:00-05:00","end":"2026-11-20T15:30:00-05:00"},
+ "document":{"id":"id:QqRAUO3-OU4AAAAAAAAINA","name":"5ea6353ac0564767a27972bd96128f5a.md","path":"/meetings/5ea6353ac0564767a27972bd96128f5a.md","size":147,"modified_at":"2026-11-18T22:08:01Z","etag":"01660943e8f91070000000391630f83","type":null},
+ "issue":{"id":"6afe21c1da6f219b72798d76","title":"Follow up: HW3 live test"}}
+```
+
+The issue id is a real Trello card id. Reading it back through Team 4's provider (`get_issue`) returned the title `Follow up: HW3 live test`. The card and the Dropbox document were then deleted.
+
+**Not yet run:** the same request with `CALENDAR_IMPL=team5` (Google Calendar through Team 5's package). That run needs a Team 5 token file for our test Google account; see "Still to do".
 
 ## 2. Switching implementations through configuration
 
@@ -95,5 +108,5 @@ mypy app    no issues found in 41 source files
 
 ## Still to do
 
-- Live run with `CALENDAR_IMPL=team5` and `TRACKER_IMPL=team4` and valid test-account credentials; replace section 1's output with it.
+- Live run with `CALENDAR_IMPL=team5` (Google Calendar through Team 5's package) and a token file for our test Google account. Trello with `TRACKER_IMPL=team4` is done (section 1b).
 - Deploy this branch (merge into `hw3-milestone1`, push a `deploy-oci-*` tag; see [DEPLOYMENT.md](DEPLOYMENT.md)) and set `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL` and `TRELLO_*` in the VM's `.env`.
