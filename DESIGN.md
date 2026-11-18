@@ -1,20 +1,20 @@
 # DESIGN: Team 1 composes Storage, Calendar and Issue Tracker (HW3 Milestone 1)
 
-> Items marked **⚠️ TO FILL** are not decided or not built yet. Whoever owns that part replaces the marker with the real answer.
+> **⚠️ TBD** marks the few points the team has not decided yet. Everything else describes the code on `hw3-milestone1` (plus #48) as of Nov 18, 2026, or is labelled **Proposed**.
 
 | | |
 | --- | --- |
 | **Title** | Team 1 composes Storage, Calendar and Issue Tracker behind one API operation |
-| **Authors** | ⚠️ TO FILL |
-| **Team / vertical** | Team 1, Document Storage (Dropbox) |
-| **Internal reviewer** | ⚠️ TO FILL (a teammate who did not write the section) |
-| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TO FILL (someone from another team) |
+| **Authors** | Shini Agarwal (document). Integration code by Dayana Alejandro (#46, #47, #48) and Yashwanth Kasanneni (#49, deployment) |
+| **Team / vertical** | Team 1, Document Storage (Dropbox): Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni |
+| **Internal reviewer** | ⚠️ TBD (a teammate who did not write this document) |
+| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TBD (one reviewer from another team) |
 | **Status** | Draft |
 | **Last updated** | Nov 18, 2026 |
-| **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (latest tag). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract` `v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
-| **Implementations used** | Storage: ours (Dropbox). Calendar: Team 5 `team5-calendar-v0.1.0`. Issue Tracker: Team 4 Trello `team-4-issue-tracker-trello-v1.0.0` |
-| **Decision memo** | HW2 storage memo: [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md) links it. ⚠️ TO FILL: link to any HW3 cross-team agreement |
-| **Implementation work** | Python 3.14 (#46), calendar integration (#47), issue tracker integration (#48), standalone Dropbox package (#49). ⚠️ TO FILL: the PR for the composed operation |
+| **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (standalone package). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
+| **Implementations used** | Storage: ours (Dropbox). Calendar: Team 5 [`team5-calendar-v0.1.0`](https://github.com/juno-junhyuk-lee/OSPSD-Team-5) (Google Calendar). Issue Tracker: Team 4 [`team-4-issue-tracker-trello-v1.0.0`](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) (Trello) |
+| **Decision memo** | HW2 storage memo, linked from [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md) |
+| **Implementation work** | #46 (Python 3.14), #47 (calendar), #48 (issue tracker), #49 (standalone Dropbox package), #50 (package request from Team 2) |
 
 The HW2 design (how our service adopted the shared storage contract) is kept in [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md).
 
@@ -24,33 +24,33 @@ The HW2 design (how our service adopted the shared storage contract) is kept in 
 
 ### Context
 
-HW2 made each vertical a shared contract: storage (`cloud_storage_api`), calendar (`calendar_contract`) and issue tracking (`issue_tracker_contract`). In HW3 a consumer wants one request that does work in all three places, for example "create a meeting, save its notes, and open a follow-up issue", without writing code for each provider.
+HW2 made each vertical a shared contract: storage (`cloud_storage_api`), calendar (`calendar_contract`) and issue tracking (`issue_tracker_contract`). In HW3 a consumer wants one request that does work in all three, for example "create a meeting, save its notes, open a follow-up issue", without writing code for each provider.
 
-Per the TA, a team consumes another vertical by importing that team's **implementation package in-process**, not by calling their deployed HTTP API. So Team 1's service installs Team 5's calendar package and Team 4's Trello package and calls them through their contracts.
+Per the TA, a team consumes another vertical by importing that team's **implementation package in-process**, not by calling their deployed HTTP API. Team 1's service therefore installs Team 5's calendar package and Team 4's Trello package and calls them through their contracts. We use our own implementation for storage.
 
-What makes this hard today, concretely:
+What makes this hard, concretely:
 
 | Difference | Storage (ours) | Calendar (Team 5) | Issue Tracker (Team 4) | What a caller could get wrong |
 | --- | --- | --- | --- | --- |
-| Error type | Our `StorageError` subclasses, HTTP body `{"error": {"code", "message"}}` | `CalendarError(code, message, retryable)` | `ServiceError(code, message, provider_involved)` | Three exception types and three code sets for one request |
-| "Bad input" | `400 invalid_request` | `ErrorCode.INVALID_INPUT` | `invalid_input`, which the contract maps to **422** | The same mistake would surface as 400 from one step and 422 from another |
-| Uncertain write | `502 provider_error` (check before retrying) | `retryable` flag on the error | `provider_error` and `internal_error` are in `OUTCOME_UNKNOWN_CODES` | A caller that blindly retries can create a second event or issue |
-| Identifiers | Path (`/docs/a.pdf`) plus an opaque Dropbox `id` | Opaque event `id` | Opaque issue `id` | Three id kinds to keep together to undo or look up a run |
-| Time format | `modified_at` UTC ending in `Z` | RFC 3339 with an **explicit offset**; naive times are rejected | none | A timestamp valid for storage can be rejected by the calendar |
+| Error type | Our `StorageError` subclasses; HTTP body `{"error": {"code", "message"}}` | `CalendarError(code, message, retryable)` | `ServiceError(code, message, provider_involved)` | Three exception types and three code sets in one request |
+| "Bad input" | `400 invalid_request` | `INVALID_INPUT` | `invalid_input`, which its contract maps to **422** | The same mistake surfaces as 400 from one step and 422 from another |
+| Uncertain write | `502 provider_error`, check before retrying | `retryable` flag on the error | `provider_error` and `internal_error` are `OUTCOME_UNKNOWN_CODES` | A blind retry can create a second event or card |
+| Identifiers | Path (`/docs/a.pdf`) plus an opaque Dropbox `id` | Opaque Google event `id` | Opaque Trello card `id` | Three id kinds to keep together to undo or look up a run |
+| Time format | `modified_at` is UTC ending in `Z` | RFC 3339 with an **explicit offset**; times without one are rejected | none | A timestamp without an offset is refused by the calendar |
 
 ### Goals (observable)
 
-1. One deployed API operation runs fixed steps across storage, calendar and issue tracker for one test account, and returns the ids it created. ⚠️ TO FILL once the route exists: its URL and a recorded run.
-2. Every failure, whichever step it comes from, uses our one error body `{"error": {"code", "message"}}` and names the step that failed. A write whose result is unknown is reported as unknown, never as "nothing happened".
-3. Each partner implementation can be replaced by configuration only (`CALENDAR_IMPL`, `TRACKER_IMPL`), with no code change. The same operation runs unchanged against the in-memory fakes and the real providers.
-4. Existing storage routes behave exactly as in HW2 and keep passing the shared storage conformance suite.
+1. One deployed API operation runs fixed steps across storage, calendar and issue tracker for one test account and returns the ids it created.
+2. Every failure, from any step, uses our one error body and names the step. A write whose result is unknown is reported as unknown, never as "nothing happened".
+3. Each partner implementation is replaced by configuration only (`CALENDAR_IMPL=fake|team5`, `TRACKER_IMPL=fake|team4`). The same operation runs unchanged against the in-memory fakes and the real providers.
+4. Existing storage routes behave as in HW2 and keep passing the shared storage conformance suite in CI.
 
 ### Non-goals
 
-- **A product, an agent, a user interface or user accounts.** Milestone 2 adds those. This milestone uses one fixed test account per provider.
+- **A product, agent, user interface or user accounts.** Milestone 2 adds those. This milestone uses one test account per provider.
 - **Calling other teams' deployed services over HTTP.** We import their packages, as the TA clarified.
-- **Distributed transactions.** The three providers cannot commit together. We undo what we can and report what we cannot (section 5).
-- **Using every partner feature.** Only the operations the composed workflow needs are used.
+- **Distributed transactions.** The three providers cannot commit together; we undo what we can and report what we cannot (section 5).
+- **Every partner feature.** Only the operations the composed workflow needs are used: calendar `create` and `delete`, issue `create_issue` and `delete_issue`, storage `upload` and `delete`.
 
 ---
 
@@ -61,81 +61,94 @@ What makes this hard today, concretely:
 | Component | File | Responsibility | Status |
 | --- | --- | --- | --- |
 | Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract` (pinned in `requirements.txt`) | Types, interfaces and error codes we code against | Installed |
-| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Talk to the real calendar and Trello | Installed |
-| Calendar adapter | `app/integrations/calendar.py` | Picks the implementation from `CALENDAR_IMPL`, maps `CalendarError` codes to our errors, includes `InMemoryCalendarService` | Done (#47) |
-| Issue tracker adapter | `app/integrations/issue_tracker.py` | Picks the implementation from `TRACKER_IMPL`, maps `ServiceError` codes to our errors, includes `InMemoryIssueProvider` | Done in #48. ⚠️ TO FILL: #48 was merged into `hw3-integrate-calendar-api` after #47 had merged, so it is **not yet on `hw3-milestone1`** |
-| Storage | `app/providers/dropbox/` (`DropboxStorage`), `app/dependencies.py` | Unchanged from HW2 | Done |
-| Composed operation | ⚠️ TO FILL: route file and service function | Runs the fixed steps, undoes earlier steps on failure, returns all ids | **Not built** |
-| Error handling | `app/main.py`, `app/errors.py` | Turns our domain errors into the HTTP error body | Done |
+| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Call Google Calendar and Trello | Installed |
+| Calendar adapter | `app/integrations/calendar.py` | `get_calendar_service()` picks the implementation from `CALENDAR_IMPL`; `_MappedCalendarService` maps `CalendarError` codes to our errors; `InMemoryCalendarService` is the fake | Done (#47) |
+| Issue tracker adapter | `app/integrations/issue_tracker.py` | `get_issue_provider()` picks from `TRACKER_IMPL`; `_MappedIssueProvider` maps `ServiceError` codes; `InMemoryIssueProvider` is the fake | Done (#48), but #48 was merged into `hw3-integrate-calendar-api` after #47 had merged, so it is **not on `hw3-milestone1` yet** |
+| Storage | `app/providers/dropbox/`, `app/dependencies.py` | Unchanged from HW2 | Done |
+| Composed operation | **Proposed:** `app/api/routes/workflows.py` | Runs the fixed steps, undoes earlier steps on failure, returns all ids | Not built |
+| Error handling | `app/main.py`, `app/errors.py` | Domain errors to the HTTP error body | Done |
 | Startup configuration | `app/core/config.py`, `.env` | `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL`, `TRELLO_*`, `DROPBOX_*` | Done |
 
-**Dependency direction.** Routes depend only on our interfaces (`DocumentStorage`, the calendar and issue `get_*` factories). Only the adapters import partner packages. Partner exceptions are translated inside the adapters and never reach a route.
+**Dependency direction.** Routes depend only on our interfaces (`DocumentStorage` and the two `get_*` factories). Only the adapters import partner packages, and partner exceptions are translated inside them, so no partner type reaches a route.
 
 **Who creates and closes clients, and who owns state.**
-- Dropbox: one client, created on first use and cached (`get_dropbox_client()`), as in HW2.
-- Calendar: `get_calendar_service()` builds a service on each call. With `CALENDAR_IMPL=team5`, Team 5's service is bound to the OAuth token file in `TEAM5_TOKEN_FILE` and authorizes on its first call.
-- Issue tracker: `get_issue_provider()` builds a provider on each call. With `TRACKER_IMPL=team4`, it reads `TRELLO_API_KEY`, `TRELLO_TOKEN` and `TRELLO_LIST_ID`.
-- ⚠️ TO FILL: whether the composed route builds the calendar and tracker once at startup or per request.
-- State: Team 1 keeps no application state for this operation. Events live in the test calendar, issues on the Trello list, documents in our Dropbox app folder.
+- **Dropbox:** one client, created on first use and cached (`get_dropbox_client()`), as in HW2.
+- **Calendar:** `get_calendar_service()` builds a new service on each call. Team 5's service is bound to the OAuth token file in `TEAM5_TOKEN_FILE` and authorizes on its first call; each operation opens and closes its own Google API client (`build(...)` in a `with` block).
+- **Issue tracker:** `get_issue_provider()` builds a new provider on each call. Team 4's provider reads `TRELLO_*` from the environment and opens one HTTP connection per request, so there is nothing to close.
+- **Proposed:** the composed route gets both through FastAPI dependencies, built once per request, like storage today.
+- **State:** Team 1 keeps no application state for this operation. Events live in the test account's primary Google Calendar, cards on one Trello list, documents in our Dropbox app folder.
 
 ### The composed operation
 
-⚠️ TO FILL: the team has not fixed the operation yet. **Proposed for discussion, replace or confirm:**
+**Proposed** (⚠️ TBD: the team confirms or replaces it):
 
 > `POST /workflows/meeting` with `{"title", "start", "end"}`:
-> 1. **Calendar:** create the event.
-> 2. **Storage:** save a notes document at `/meetings/<event-id>.md`.
-> 3. **Issue tracker:** create the issue `Follow up: <title>`, mentioning the document path.
+> 1. **Calendar:** `create(CreateEvent(title, start, end))`.
+> 2. **Storage:** `upload("/meetings/<event-id>.md", notes)`, where the notes file holds the title, times and event id.
+> 3. **Issue tracker:** `create_issue("Follow up: <title>")`.
 >
-> Returns `201` with the event id, the document's file info and the issue id.
+> Returns `201` with the event, the document's file info and the issue.
 
-Guarantees it needs: each step runs at most once per request; a later step only runs if the earlier ones succeeded; the response either lists everything created or says which step failed and what may be left behind.
+Guarantees it needs: each step runs at most once per request; a step runs only if the earlier ones succeeded; the response lists everything created, or names the failed step and what may be left behind.
 
 Deliberate limits: one test account per provider; no retries inside the request; no update or delete operation across all three.
 
-### Request trace: success
+### Request trace: success (illustrative, for the proposed operation)
 
-⚠️ TO FILL after implementation. Expected shape, for the proposed operation:
+1. The route validates the body: `title` 1–256 characters (the issue title limit, since it is reused in step 3), `start` and `end` RFC 3339 with an offset, `end` after `start`. Bad input returns `400 invalid_request` and **no provider is called**.
+2. Calendar adapter → Team 5 → one Google Calendar `events.insert` on `primary` → event id.
+3. `DropboxStorage.upload` → one Dropbox `files_upload` with `WriteMode.add` (never overwrites) → file info.
+4. Issue adapter → Team 4 → one Trello `POST /1/cards` on the configured list → card id.
+5. `201` with all three. No log line on success; the response carries `X-Request-ID`.
 
-1. The route validates the body: title present, `start`/`end` RFC 3339 with an offset, `end` after `start`. Bad input returns `400 invalid_request` and **no provider is called**.
-2. Calendar adapter: `create(CreateEvent(...))` → Team 5 → event id.
-3. Storage: `upload("/meetings/<event-id>.md", notes)` → Dropbox `files_upload` (never overwrites) → file info.
-4. Issue adapter: `create_issue("Follow up: …")` → Team 4 → Trello → issue id.
-5. The route returns `201` with all three. No log line on success; every response carries `X-Request-ID`.
+### Request trace: expected failure (illustrative)
 
-### Request trace: expected failure
+Step 4 fails because Trello rejects the token.
 
-⚠️ TO FILL after implementation. Expected shape: step 4 fails because Trello rejects the token.
-
-1. Team 4 raises `ServiceError(ACCESS_DENIED)`; the issue adapter maps it to `PermissionDeniedError`.
-2. The operation undoes steps 3 and 2: delete the document, delete the event.
-3. `app/main.py` returns `403 permission_denied` and writes one `request_failed` line with the operation and request id, no titles or paths.
+1. Team 4 raises `ServiceError(ACCESS_DENIED)`; `_MappedIssueProvider` turns it into `PermissionDeniedError("Issue tracker create_issue failed")`.
+2. The operation undoes step 3 (`storage.delete`) and step 2 (`calendar.delete`).
+3. `app/main.py` returns `403 permission_denied` and writes one `request_failed` line with the operation, code, status and request id. No title, path or token is logged.
 
 ---
 
 ## 3. API and data model
 
-**Authoritative contracts:** the three packages pinned in `requirements.txt` (links in the header). The HTTP shape of our storage routes is the one tested by the shared storage conformance suite ([TESTING.md](TESTING.md)).
-
-**Important choices**
+**Authoritative contracts:** the three contract packages pinned in `requirements.txt` (links in the header). The HTTP shape of our storage routes is the one the shared storage conformance suite tests ([TESTING.md](TESTING.md)).
 
 | Topic | Choice |
 | --- | --- |
-| Identifiers | Event and issue ids are opaque strings from the partner; we store and return them, never parse them. A storage file is named by its path; its Dropbox `id` is also returned |
-| Scope | One calendar and one Trello list per deployment, set by configuration. A request cannot choose another |
-| Calendar times | `start` and `end` must be RFC 3339 with an explicit offset (`calendar_contract.timestamps`); we pass them through unchanged |
-| Issue fields | `Issue` has only `id` and `title`. Titles are limited to 256 characters (`MAX_TITLE_LENGTH`); list returns at most 100 (`MAX_LIST_LIMIT`) |
-| Errors | Partner codes map to our existing errors (table in section 5), so callers see one error body |
+| Identifiers | Event and card ids are opaque strings from the partner; we return them and never parse them. A document is named by its path; its Dropbox `id` is returned too |
+| Scope | Team 5 always uses the test account's `primary` calendar. Team 4 always uses the list in `TRELLO_LIST_ID`. A request cannot choose another |
+| Calendar times | RFC 3339 with an explicit offset (`calendar_contract.timestamps`), passed through unchanged |
+| Issue fields | `Issue` has only `id` and `title`; titles up to 256 characters (`MAX_TITLE_LENGTH`); list returns at most 100 (`MAX_LIST_LIMIT`) |
+| Errors | Partner codes map onto our existing errors (section 5), so callers see one error body |
 
-**Representative request and response:** ⚠️ TO FILL. At proposal time this would be an *illustrative expected response*; after implementation, a sanitized observed response and how it was produced.
+**Representative request and response (illustrative expected response, not yet observed):**
+
+```
+POST /workflows/meeting
+Content-Type: application/json
+
+{"title": "Design review", "start": "2026-11-20T15:00:00-05:00", "end": "2026-11-20T15:30:00-05:00"}
+
+201 Created
+{
+  "event": {"id": "<google event id>", "title": "Design review", "start": "2026-11-20T15:00:00-05:00", "end": "2026-11-20T15:30:00-05:00"},
+  "document": {"id": "id:<dropbox id>", "name": "<google event id>.md", "path": "/meetings/<google event id>.md", "size": 120, "modified_at": "2026-11-18T14:00:00Z", "etag": "<rev>", "type": null},
+  "issue": {"id": "<trello card id>", "title": "Follow up: Design review"}
+}
+```
+
+After implementation this is replaced by a sanitized observed response and the command that produced it.
 
 **Information loss and limits**
 
-- Mapping partner errors onto our storage error types loses the partner's own code. For example, the issue tracker's `precondition_failed` (412) and `request_in_progress` (409) both become our `409 conflict`, and its `idempotency_key_reused` becomes `400`.
-- Partner `not_found` becomes our `not_found`, whose message currently says "File not found" style text; the step name in the message tells the caller which provider it was.
-- The calendar's `retryable` flag and the issue tracker's `provider_involved` flag are not exposed to the caller.
+- Mapping onto our storage error types loses the partner's own code: the issue tracker's `precondition_failed` (412) and `request_in_progress` (409) both become our `409 conflict`, and `idempotency_key_reused` (422) becomes `400`.
+- Partner `not_found` becomes our `not_found`. The message names the step (for example "Calendar get failed"), which tells the caller which provider it was.
+- The calendar's `retryable` flag and the issue tracker's `provider_involved` and `may_have_applied` information are not passed to the caller.
+- Team 4 also offers `create_tagged_issue(title, creation_token)` for safe retries; our adapter does not use it yet.
 
-**HW2 operations:** every storage route stays as it is and is not part of the composed operation's contract. The standalone package in `packages/team1_dropbox` (#49) is how other teams consume our storage.
+**HW2 operations:** every storage route stays as it is. Other teams consume our storage through the standalone package `packages/team1_dropbox` (#49), not through our HTTP API.
 
 ---
 
@@ -145,20 +158,26 @@ Deliberate limits: one test account per provider; no retries inside the request;
 
 | | Chosen: reuse our errors (`InvalidRequestError`, `FileNotFoundError`, …) | Alternative: one error type per vertical |
 | --- | --- | --- |
-| Caller | One error body and one code table for every route | Must handle three code sets |
-| Our code | No new handlers in `app/main.py`; adapters are short | New exception classes, handlers and docs |
-| Lost detail | Partner-specific codes (e.g. 412 vs 409) | Kept |
+| Caller | One error body and one code table for every route | Three code sets |
+| Our code | No new handlers in `app/main.py`; each adapter has one `_call` translation function | New exception classes, handlers and docs |
+| Lost detail | Partner-specific codes (412 vs 409, 422 vs 400) | Kept |
 
-**Why:** the caller of the composed operation needs to know whether to fix the input, re-authenticate, or check what happened, not which provider's code table applies. The step name in the message says which provider failed.
+**Why:** the caller of the composed operation needs to know whether to fix the input, re-authenticate, or check what happened, not which provider's table applies; the step name in the message says which provider failed. Translation is centralized in one function per adapter rather than in each route, so a new partner code is handled in one place.
 **Revisit if** a caller needs to branch on a partner-specific outcome, such as an issue tracker precondition failure.
 
 ### Decision 2: import partner packages in-process, not call their HTTP services
 
-Chosen per the TA's clarification. **Cost:** partner bugs and dependency pins become ours; the Python 3.14 upgrade (#46) was needed for their packages. **Benefit:** no network hop or second deployment to depend on; the fakes make the operation testable offline.
+Chosen per the TA. **Cost:** partner dependency pins become ours, which forced the Python 3.14 upgrade (#46); a partner bug runs inside our process. **Benefit:** no network hop to a second deployment; the in-memory fakes make the operation testable offline; swapping implementations is one environment variable.
 
-### Decision 3: ⚠️ TO FILL (how the composed operation handles a failed step)
+### Decision 3: on a failed step, undo earlier steps (Proposed)
 
-Expected options: undo earlier steps (delete the event and document) versus leave them and report a partial result. The choice decides what a caller must clean up.
+| | Proposed: undo earlier steps | Alternative: leave them, report a partial result |
+| --- | --- | --- |
+| Caller | Either everything exists or nothing does, except when an undo itself fails | Must clean up event and document by hand |
+| Our code | A delete per completed step, in reverse order | Simpler |
+| Risk | An undo can fail too; then the response must list what is left | Leftovers on every failure |
+
+**Revisit if** a step's result is unknown (section 5): deleting something whose creation is unknown is not reliable, so that case is reported instead of undone.
 
 ---
 
@@ -180,65 +199,73 @@ Missing configuration (`TEAM5_TOKEN_FILE`, any `TRELLO_*`) or an unknown `CALEND
 
 ### Uncertain writes and retries
 
-- The issue tracker contract marks `provider_error` and `internal_error` as "outcome unknown": the issue may have been created. We report these as `502` and do not retry.
-- The service never retries a write inside a request. A blind retry could create a second event, document or issue.
-- ⚠️ TO FILL: how the composed operation reports an unknown outcome in one step (for example, list each step as `done`, `failed`, `undone` or `unknown`), and what the caller should check before retrying.
+- **Calendar:** Team 5 calls Google with `num_retries=0` and reports whether the write had started.
+- **Issue tracker:** Team 4 sets `may_have_applied` on a create that failed with a 5xx or after the request was sent; its contract lists `provider_error` and `internal_error` as outcome unknown.
+- **Ours:** the service never retries a write inside a request, because a blind retry can create a second event, document or card. An unknown outcome is reported as `502 provider_error`, and the caller checks before trying again.
+- **Proposed** for the composed operation: the response lists each step as `done`, `failed`, `undone` or `unknown`, so the caller knows what to check.
 
 ### Configuration, credentials and logging
 
-- All credentials are environment variables (`.env` locally, never committed): `DROPBOX_*`, `TEAM5_TOKEN_FILE` (path to Team 5's OAuth token file), `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID`.
-- ⚠️ TO FILL: where the Team 5 token file and the Trello credentials live on the OCI VM and in CI.
-- Logging stays as in HW2: one `request_failed` line per failed request with the operation, code, status and request id. Event titles, issue titles, file paths, tokens and partner messages are never logged.
+- All credentials are environment variables (`.env` locally, never committed): `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`; `TEAM5_TOKEN_FILE` (path to the test account's Google OAuth token file; Team 5 never starts a browser login during a request); `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_LIST_ID`.
+- On the OCI VM they go in `~/sandbox/.env` next to the Dropbox ones ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). ⚠️ TBD: where the Team 5 token file is stored on the VM, and whether CI gets calendar and Trello secrets.
+- Logging stays as in HW2: one `request_failed` line per failed request with the operation, code, status and request id. Event titles, card titles, file paths, tokens and partner messages are never logged.
 
-### Cost of the composed operation
+### Cost of the composed operation (proposed)
 
-⚠️ TO FILL after implementation: provider calls per step. Known so far: storage upload is 1 Dropbox call ([docs/COST.md](docs/COST.md) still applies). Calendar create and issue create are one contract call each; how many provider requests each makes is inside the partner package and not measured.
+| Step | Provider calls | Source |
+| --- | --- | --- |
+| Calendar create | 1 Google Calendar `events.insert`, plus a token refresh when the access token has expired | `team5_calendar/google_create_events.py` |
+| Storage upload | 1 Dropbox `files_upload` | [docs/COST.md](docs/COST.md), unchanged |
+| Issue create | 1 Trello `POST /1/cards`, 10-second timeout | `team_4_issue_tracker_trello/provider.py` |
+| Undo after a failure | 1 delete per completed step | same files |
+
+Local work is validation and building the notes text. Latency is not used to infer anything about the providers.
 
 ### Cleanup
 
-Live runs create real events, documents and issues. Smoke scripts (`scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py`) delete what they create. ⚠️ TO FILL: the cleanup rule for the composed operation's live test.
+Live runs create real events, documents and cards. The smoke scripts (`scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py`) delete what they create. **Proposed:** the composed operation's live test uses titles starting with `HW3 test`, writes documents under `/integration-tests/`, and deletes all three in a `finally` block.
 
 ### Deployment
 
-Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). ⚠️ TO FILL: `deploy-oci.yml` and `ci.yml` only reference `hw2-milestone3`, so neither CI nor deploy runs for `hw3-milestone1` today. Owner and fix needed before the operation can be "deployed".
+Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). Today `deploy-oci.yml` and `ci.yml` only reference `hw2-milestone3`, so **neither CI nor deploy runs for `hw3-milestone1`**. Both need the branch name changed before the operation can be deployed from `hw3-milestone1`.
 
 ---
 
 ## 6. Migration and coordination plan
 
-**Contract revisions adopted:** storage `0.2.0` in the service (⚠️ TO FILL: decide whether to move to `0.3.1`, which the standalone package already uses), calendar `v0.1.0`, issue tracker `v1.1.0`.
+**Contract revisions adopted:** storage `0.2.0` in the service, calendar `v0.1.0`, issue tracker `v1.1.0`. Storage `0.3.1` only adds `open_download` and `create_stream`, both with default implementations that reuse `download` and `create`; the standalone package already targets it. **Proposed:** keep the service on `0.2.0` for this milestone and move to `0.3.1` when we need streaming.
 
 ### What changes
 
 | Area | Change | Effect on existing callers |
 | --- | --- | --- |
-| Python | 3.12 → 3.14 (#46) | Developers and CI need 3.14 |
+| Python | 3.12 → 3.14 (#46) | Developers, CI and the Docker image need 3.14 |
 | Dependencies | Partner contract and implementation packages pinned to tags | None |
 | Configuration | New `CALENDAR_IMPL`, `TEAM5_TOKEN_FILE`, `TRACKER_IMPL`, `TRELLO_*` | Defaults are the fakes, so nothing changes until set |
-| Routes | ⚠️ TO FILL: the composed operation's route | Additive |
+| Routes | `POST /workflows/meeting` (proposed) | Additive |
 | Storage routes | None | None |
 
 ### Work breakdown
 
 | Work | Owner | Depends on | Verification |
 | --- | --- | --- | --- |
-| Calendar integration | Dayana | Python 3.14 | `tests/test_calendar_integration.py`, `scripts/smoke_team5_calendar.py` (#47) |
+| Calendar integration | Dayana | Python 3.14 | `tests/test_calendar_integration.py`, `scripts/smoke_team5_calendar.py` (#47, merged) |
 | Issue tracker integration | Dayana | Calendar integration | `tests/test_issue_tracker_integration.py`, `scripts/smoke_team4_issue_tracker.py` (#48) |
-| Bring #48 into `hw3-milestone1` | ⚠️ TO FILL | — | 565 tests pass on `hw3-milestone1` |
-| Standalone Dropbox package for other teams | Yashwanth | — | `packages/team1_dropbox/tests` (#49). ⚠️ TO FILL: tag it and bring it into `hw3-milestone1` (issue #50) |
-| Composed operation (route, undo, tests) | ⚠️ TO FILL | Both integrations on `hw3-milestone1` | Fake-backed route tests, one live run |
-| CI and deploy for `hw3-milestone1` | ⚠️ TO FILL | — | Green CI run, deployed health check |
+| Bring #48 into `hw3-milestone1` | Unassigned | — | One PR from `hw3-integrate-calendar-api`; 565 tests pass |
+| Standalone Dropbox package | Yashwanth | — | `packages/team1_dropbox/tests` (#49, merged into `hw2-milestone3`); still needs a tag and to reach `hw3-milestone1` (issue #50) |
+| Composed operation (route, undo, tests) | Unassigned | #48 on `hw3-milestone1` | Fake-backed route tests, one live run |
+| CI and deploy for `hw3-milestone1` | Unassigned (Yashwanth built the deploy workflow) | — | Green CI run, deployed `/health` |
 | DESIGN.md | Shini | — | Internal and external review |
 
-**Early end-to-end step:** run the composed operation once against all three real providers with the test account as soon as the route exists, before polishing tests, to catch credential and time-format problems early.
+**Early end-to-end step:** run the composed operation once against all three real providers with the test account as soon as the route exists, before polishing tests. That catches credential, list-id and time-format problems early.
 
 ### If a contract changes
 
-Whoever finds the problem opens an issue on the owning team's repository with a reproduction and does not patch the contract alone. We move our pin only when the owner publishes a new tag. Consumers of **our** storage package (Team 2 via issue #50, ⚠️ TO FILL: others) are told in the shared Slack channel before we publish a breaking storage tag.
+Whoever finds the problem opens an issue on the owning team's repository with a reproduction and does not patch the contract alone. We move a pin only when the owner publishes a new tag. Consumers of **our** storage package (Team 2, issue #50) are told in the shared Slack channel before we publish an incompatible storage tag.
 
 ### Issue tracker: one behavior, two implementations
 
-The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IMPL=fake` gives `InMemoryIssueProvider` (tests and local runs); `TRACKER_IMPL=team4` gives Team 4's Trello provider. Both go through the same error mapping (`_MappedIssueProvider`), so the composed operation behaves the same with either. Switching is a startup configuration choice; there is no runtime switching. Calendar works the same way with `CALENDAR_IMPL=fake|team5`.
+The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IMPL=fake` gives `InMemoryIssueProvider` (tests and local runs); `TRACKER_IMPL=team4` gives Team 4's `TrelloIssueProvider`. Both go through the same `_MappedIssueProvider`, so the composed operation behaves the same with either. What differs is only below the contract: the fake keeps cards in a dict and never fails unless a failure is injected; Trello needs three settings, makes one HTTP request per call and can report an unknown outcome. Switching is a startup choice; there is no runtime switching. Calendar works the same way with `CALENDAR_IMPL=fake|team5`.
 
 ---
 
@@ -246,18 +273,24 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 
 | Guarantee | Check | Level |
 | --- | --- | --- |
-| Config picks the right implementation, and rejects unknown or incomplete settings | `test_calendar_integration.py` (factory tests), `test_issue_tracker_integration.py` (factory tests) | Fast, no network |
-| Every partner error code maps to the documented error | `test_contract_errors_map_to_application_errors` in both files | Fast |
-| An unexpected partner exception becomes `provider_error` and names the step | `test_unexpected_error_maps_to_provider_error_with_step_name` in both files | Fast |
-| Fakes can inject a failure for one method | `test_fake_can_inject_failure_for_chosen_method`, `test_fake_supports_update_list_and_delete` | Fast |
-| The real partner packages work with our credentials | `scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py` (skip unless configured; delete what they create) | Live |
+| Config picks the right implementation and rejects unknown or incomplete settings | Factory tests in `test_calendar_integration.py` and `test_issue_tracker_integration.py` | Fast, no network |
+| Every partner error code maps to the documented error | `test_contract_errors_map_to_application_errors` (both files) | Fast |
+| An unexpected partner exception becomes `provider_error` and names the step | `test_unexpected_error_maps_to_provider_error_with_step_name` (both files) | Fast |
+| Fakes behave like the contract and can fail on demand | `test_fake_can_inject_failure_for_chosen_method`, `test_fake_supports_update_list_and_delete` | Fast |
+| The real partner packages work with our credentials | `scripts/smoke_team5_calendar.py`, `scripts/smoke_team4_issue_tracker.py` (skip unless configured; delete what they create) | Live, run by hand |
 | Storage still matches the shared contract | Shared storage conformance suite in CI ([TESTING.md](TESTING.md)) | Live, real Dropbox |
-| Composed operation: success, each step failing, undo, unknown outcome | ⚠️ TO FILL | Fast (with fakes) |
-| Composed operation against real providers | ⚠️ TO FILL | Live |
+| Composed operation: success, each step failing, undo, unknown outcome | **Proposed:** `tests/test_workflow_meeting.py` with both fakes and fake storage, injecting a failure per step | Fast |
+| Composed operation against real providers | **Proposed:** one live test per the cleanup rule in section 5 | Live |
 
-**Conformance suites:** storage runs in our CI. ⚠️ TO FILL: whether the calendar and issue tracker verticals publish conformance suites, and whether we run them against Team 5's and Team 4's packages.
+**Conformance suites**
+- **Storage:** the shared suite runs in our CI against real Dropbox; 51/55 pass, and the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)).
+- **Calendar:** `calendar_contract.conformance.CalendarServiceConformance` ships with the contract; a test subclasses it and provides two fixtures, `service` and `failing_service` (a factory for an implementation whose provider fails every call). **Proposed:** run it against `InMemoryCalendarService` so our fake is held to the same rules as Team 5.
+- **Issue tracker:** Team 4 keeps its suite in `contract/tests/conformance` and runs it against its providers.
+- A mismatch would show up as a failing conformance test, for example our fake accepting a timestamp without an offset that the contract rejects.
 
-**Known gaps:** no test yet covers more than one vertical in one request, and the live smoke scripts are run by hand, not in CI.
+**Contract mismatches found so far:** none. The partner packages have not yet been run live from our service, so this is not evidence of compatibility; the smoke scripts and the early end-to-end step check it.
+
+**Known gaps:** no test covers more than one vertical in one request yet, and the live smoke scripts are not in CI.
 
 ---
 
@@ -265,19 +298,17 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 
 | # | Question | Consequence | Owner | Next step |
 | --- | --- | --- | --- | --- |
-| 1 | What is the fixed-step operation? | Sections 2–7 depend on it | ⚠️ TO FILL | Team decides; update this document |
-| 2 | Undo earlier steps on failure, or report a partial result? | What the caller must clean up | ⚠️ TO FILL | Decide with question 1 |
-| 3 | Move the service from storage `0.2.0` to `0.3.1`? | Matches the package other teams install | ⚠️ TO FILL | Diff the two tags |
-| 4 | How do CI and deploy run for `hw3-milestone1`? | Milestone requires a deployed operation | ⚠️ TO FILL | Update `ci.yml` and `deploy-oci.yml` |
-| 5 | Where do partner credentials live on the VM? | Deployment cannot call Team 4 and 5 without them | ⚠️ TO FILL | — |
-
-**Contract mismatches reported to partner teams:** ⚠️ TO FILL (issue link and reproduction for each).
+| 1 | Is `POST /workflows/meeting` the fixed-step operation? | Sections 2–7 assume it | ⚠️ TBD | Team confirms or replaces it |
+| 2 | Undo earlier steps on failure (Decision 3)? | What the caller must clean up | Same as 1 | Decide with question 1 |
+| 3 | Stay on storage `0.2.0` or move to `0.3.1`? | Only adds streaming methods with defaults | Same as 1 | Proposed: stay for M1 |
+| 4 | CI and deploy for `hw3-milestone1` | Required for a deployed operation | Unassigned | Change the branch in `ci.yml` and `deploy-oci.yml` |
+| 5 | Partner credentials on the VM and in CI | The deployment cannot call Teams 4 and 5 without them | Unassigned | See section 5 |
 
 ### Review log
 
 | Reviewer | Comment | Response | Outcome |
 | --- | --- | --- | --- |
-| ⚠️ TO FILL | | | Changed / Explained / Accepted risk / Deferred (owner, date) |
+| — | No comments yet | — | — |
 
 ---
 
@@ -285,15 +316,15 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 
 | Task | Owner | Output | Depends on | Target |
 | --- | --- | --- | --- | --- |
-| Decide the composed operation | ⚠️ TO FILL | Sections 2–7 updated | — | Nov 18 |
-| Merge the issue tracker into `hw3-milestone1` | ⚠️ TO FILL | PR | — | Nov 18 |
-| Build and test the composed operation | ⚠️ TO FILL | PR | Two items above | Nov 18 |
-| CI and deploy for `hw3-milestone1` | ⚠️ TO FILL | Green run, deployed health check | — | Nov 18 |
-| Internal review of this document | ⚠️ TO FILL | PR comments | Draft complete | Nov 18 |
-| External review of sections 3, 6 and 7 | ⚠️ TO FILL | PR comments, answered in the review log | Draft complete | ⚠️ TO FILL |
+| Confirm the composed operation | Team | Question 1 closed | — | Nov 18 |
+| Merge the issue tracker into `hw3-milestone1` | Unassigned | PR | — | Nov 18 |
+| Build and test the composed operation | Unassigned | PR, observed response in section 3 | Two rows above | Nov 18 |
+| CI and deploy for `hw3-milestone1` | Unassigned | Green run, deployed `/health` | — | Nov 18 |
+| Internal review of this document | Internal reviewer | PR comments | Draft complete | Nov 18 |
+| External review of sections 3, 6 and 7 | External reviewer | PR comments, answered in the review log | Draft complete | Before Milestone 2 |
 
 ## Change record
 
 | Date | What changed | Why |
 | --- | --- | --- |
-| Nov 18, 2026 | HW3 design started; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
+| Nov 18, 2026 | HW3 design written; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
