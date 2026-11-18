@@ -7,7 +7,7 @@
 | **Title** | Team 1 composes Storage, Calendar and Issue Tracker behind one API operation |
 | **Authors** | Shini Agarwal (document). Integration code by Dayana Alejandro (#46, #47, #48) and Yashwanth Kasanneni (#49, deployment) |
 | **Team / vertical** | Team 1, Document Storage (Dropbox): Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni |
-| **Internal reviewer** | ⚠️ TBD (a teammate who did not write this document) |
+| **Internal reviewer** | Annie Jain (comments answered in the review log, section 8) |
 | **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TBD (one reviewer from another team) |
 | **Status** | Draft |
 | **Last updated** | Nov 18, 2026 |
@@ -43,7 +43,7 @@ What makes this hard, concretely:
 1. One deployed API operation runs fixed steps across storage, calendar and issue tracker for one test account and returns the ids it created.
 2. Every failure, from any step, uses our one error body and names the step. A write whose result is unknown is reported as unknown, never as "nothing happened".
 3. Each partner implementation is replaced by configuration only (`CALENDAR_IMPL=fake|team5`, `TRACKER_IMPL=fake|team4`). The same operation runs unchanged against the in-memory fakes and the real providers.
-4. Existing storage routes behave as in HW2 and keep passing the shared storage conformance suite in CI.
+4. Existing storage routes behave as in HW2 and keep passing the shared storage conformance suite (shared PR #6, run by our CI on `hw2-milestone3` today; see section 7).
 
 ### Non-goals
 
@@ -60,8 +60,8 @@ What makes this hard, concretely:
 
 | Component | File | Responsibility | Status |
 | --- | --- | --- | --- |
-| Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract` (pinned in `requirements.txt`) | Types, interfaces and error codes we code against | Installed |
-| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Call Google Calendar and Trello | Installed |
+| Shared contract packages | `cloud_storage_api`, `calendar_contract`, `issue_tracker_contract`, pinned in `requirements.txt` (issue tracker: only after #48 reaches `hw3-milestone1`) | Types, interfaces and error codes we code against | Storage and calendar on `hw3-milestone1`; issue tracker on `hw3-integrate-calendar-api` |
+| Partner implementations | `team5_calendar`, `team_4_issue_tracker_trello` | Call Google Calendar and Trello | Same as above |
 | Calendar adapter | `app/integrations/calendar.py` | `get_calendar_service()` picks the implementation from `CALENDAR_IMPL`; `_MappedCalendarService` maps `CalendarError` codes to our errors; `InMemoryCalendarService` is the fake | Done (#47) |
 | Issue tracker adapter | `app/integrations/issue_tracker.py` | `get_issue_provider()` picks from `TRACKER_IMPL`; `_MappedIssueProvider` maps `ServiceError` codes; `InMemoryIssueProvider` is the fake | Done (#48), but #48 was merged into `hw3-integrate-calendar-api` after #47 had merged, so it is **not on `hw3-milestone1` yet** |
 | Storage | `app/providers/dropbox/`, `app/dependencies.py` | Unchanged from HW2 | Done |
@@ -95,7 +95,7 @@ Deliberate limits: one test account per provider; no retries inside the request;
 
 ### Request trace: success (illustrative, for the proposed operation)
 
-1. The route validates the body: `title` 1–256 characters (the issue title limit, since it is reused in step 3), `start` and `end` RFC 3339 with an offset, `end` after `start`. Bad input returns `400 invalid_request` and **no provider is called**.
+1. The route validates the body before any provider call: `title` 1–245 characters, so the step-3 issue title `"Follow up: " + title` stays within the issue tracker's 256-character limit (checked: `IssueCreate` rejects 257); `start` and `end` RFC 3339 with an offset; `end` after `start`. Bad input returns `400 invalid_request` and **no provider is called**, so no event or document is left behind by a title Trello would reject.
 2. Calendar adapter → Team 5 → one Google Calendar `events.insert` on `primary` → event id.
 3. `DropboxStorage.upload` → one Dropbox `files_upload` with `WriteMode.add` (never overwrites) → file info.
 4. Issue adapter → Team 4 → one Trello `POST /1/cards` on the configured list → card id.
@@ -113,7 +113,7 @@ Step 4 fails because Trello rejects the token.
 
 ## 3. API and data model
 
-**Authoritative contracts:** the three contract packages pinned in `requirements.txt` (links in the header). The HTTP shape of our storage routes is the one the shared storage conformance suite tests ([TESTING.md](TESTING.md)).
+**Authoritative contracts:** the three contract packages, linked in the header and pinned in `requirements.txt` (the issue tracker pins arrive with #48). The HTTP shape of our storage routes is the one the shared storage conformance suite tests ([TESTING.md](TESTING.md)).
 
 | Topic | Choice |
 | --- | --- |
@@ -161,9 +161,10 @@ After implementation this is replaced by a sanitized observed response and the c
 | Caller | One error body and one code table for every route | Three code sets |
 | Our code | No new handlers in `app/main.py`; each adapter has one `_call` translation function | New exception classes, handlers and docs |
 | Lost detail | Partner-specific codes (412 vs 409, 422 vs 400) | Kept |
+| Naming cost | The Python class names come from storage: a missing calendar event raises `FileNotFoundError`, missing Trello settings raise `StorageNotConfiguredError`. HTTP codes are right, but the names mislead maintainers | Names fit each vertical |
 
 **Why:** the caller of the composed operation needs to know whether to fix the input, re-authenticate, or check what happened, not which provider's table applies; the step name in the message says which provider failed. Translation is centralized in one function per adapter rather than in each route, so a new partner code is handled in one place.
-**Revisit if** a caller needs to branch on a partner-specific outcome, such as an issue tracker precondition failure.
+**Revisit if** a caller needs to branch on a partner-specific outcome, such as an issue tracker precondition failure. **Follow-up:** rename to neutral names (`NotFoundError`, `NotConfiguredError`, keeping the old names as aliases) when Milestone 2 adds more cross-vertical code.
 
 ### Decision 2: import partner packages in-process, not call their HTTP services
 
@@ -202,7 +203,7 @@ Missing configuration (`TEAM5_TOKEN_FILE`, any `TRELLO_*`) or an unknown `CALEND
 - **Calendar:** Team 5 calls Google with `num_retries=0` and reports whether the write had started.
 - **Issue tracker:** Team 4 sets `may_have_applied` on a create that failed with a 5xx or after the request was sent; its contract lists `provider_error` and `internal_error` as outcome unknown.
 - **Ours:** the service never retries a write inside a request, because a blind retry can create a second event, document or card. An unknown outcome is reported as `502 provider_error`, and the caller checks before trying again.
-- **Proposed** for the composed operation: the response lists each step as `done`, `failed`, `undone` or `unknown`, so the caller knows what to check.
+- **Proposed** for the composed operation: the response lists each step as `done`, `failed`, `undone` or `unknown`, so the caller knows what to check. Today the adapters drop the information needed for `unknown` (section 3), so a `502` cannot yet tell "Trello definitely failed" from "Trello may have created the card". The adapters will keep it: the issue adapter will read Team 4's `may_have_applied` (and treat `OUTCOME_UNKNOWN_CODES` as unknown), and the calendar adapter will treat a `PROVIDER_ERROR` that is not `retryable` after the write started as unknown. A step marked `unknown` is reported, not undone.
 
 ### Configuration, credentials and logging
 
@@ -227,7 +228,12 @@ Live runs create real events, documents and cards. The smoke scripts (`scripts/s
 
 ### Deployment
 
-Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). Today `deploy-oci.yml` and `ci.yml` only reference `hw2-milestone3`, so **neither CI nor deploy runs for `hw3-milestone1`**. Both need the branch name changed before the operation can be deployed from `hw3-milestone1`.
+Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). On `hw3-milestone1` today:
+
+- `ci.yml` runs only for pushes and PRs on `hw2-milestone3`, so **no CI runs for `hw3-milestone1`**, including the storage conformance job.
+- `deploy-oci.yml` runs on **any** `deploy-oci-*` tag, but the remote script hard-codes `git fetch origin hw2-milestone3` and `git switch hw2-milestone3`. A tag on an HW3 commit therefore cannot deploy HW3: the script's check that `hw2-milestone3` points at the tagged commit fails ("Branch changed since workflow started"). If both happened to point at the same commit, it would deploy from the HW2 branch.
+
+Both workflows must name `hw3-milestone1` before the operation can be deployed from it (open question 4).
 
 ---
 
@@ -283,7 +289,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Composed operation against real providers | **Proposed:** one live test per the cleanup rule in section 5 | Live |
 
 **Conformance suites**
-- **Storage:** the shared suite runs in our CI against real Dropbox; 51/55 pass, and the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)).
+- **Storage:** the shared suite lives in [ospsd26-cloud-storage PR #6](https://github.com/Dayana20/ospsd26-cloud-storage/pull/6), which is **still open**; the contract repo's `main` has no `conformance/` folder yet. Our CI checks out that PR at a pinned commit (`b77617c`) and runs it against real Dropbox, but only on `hw2-milestone3`: 51/55 pass, the 4 failures are rules still marked proposed ([TESTING.md](TESTING.md)). Nothing runs it for `hw3-milestone1` until `ci.yml` names that branch.
 - **Calendar:** `calendar_contract.conformance.CalendarServiceConformance` ships with the contract; a test subclasses it and provides two fixtures, `service` and `failing_service` (a factory for an implementation whose provider fails every call). **Proposed:** run it against `InMemoryCalendarService` so our fake is held to the same rules as Team 5.
 - **Issue tracker:** Team 4 keeps its suite in `contract/tests/conformance` and runs it against its providers.
 - A mismatch would show up as a failing conformance test, for example our fake accepting a timestamp without an offset that the contract rejects.
@@ -301,14 +307,19 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | 1 | Is `POST /workflows/meeting` the fixed-step operation? | Sections 2–7 assume it | ⚠️ TBD | Team confirms or replaces it |
 | 2 | Undo earlier steps on failure (Decision 3)? | What the caller must clean up | Same as 1 | Decide with question 1 |
 | 3 | Stay on storage `0.2.0` or move to `0.3.1`? | Only adds streaming methods with defaults | Same as 1 | Proposed: stay for M1 |
-| 4 | CI and deploy for `hw3-milestone1` | Required for a deployed operation | Unassigned | Change the branch in `ci.yml` and `deploy-oci.yml` |
+| 4 | CI and deploy for `hw3-milestone1` | No CI runs for HW3 code, and a deploy tag on HW3 code fails the branch check (section 5) | Unassigned | Name `hw3-milestone1` in `ci.yml` and in the fetch/switch lines of `deploy-oci.yml` |
 | 5 | Partner credentials on the VM and in CI | The deployment cannot call Teams 4 and 5 without them | Unassigned | See section 5 |
 
 ### Review log
 
 | Reviewer | Comment | Response | Outcome |
 | --- | --- | --- | --- |
-| — | No comments yet | — | — |
+| Annie (internal) | A 246–256 character title passes validation, then Trello rejects `"Follow up: " + title` after the event and document exist | Title capped at 245 so the issue title fits 256; checked before any provider call | Changed |
+| Annie (internal) | Deploying `hw3-milestone1` would deploy `hw2-milestone3` | Checked `deploy-oci.yml`: it hard-codes `hw2-milestone3`, and its SHA check makes a deploy from an HW3 tag fail rather than deploy HW2. Section 5 now states this; fix tracked as open question 4 | Changed |
+| Annie (internal) | The storage conformance suite is not in the shared repo, and CI does not run it for `hw3-milestone1` | Section 7 and Goal 4 now say it lives in open PR #6 and runs only on `hw2-milestone3` | Changed |
+| Annie (internal) | Goal 2 promises "unknown" outcomes, but the adapters drop `may_have_applied` and `retryable` | Section 5: the adapters will keep that information to mark a step `unknown` | Changed |
+| Annie (internal) | Storage error class names are misleading for calendar and issue errors | Added as a cost to Decision 1, with a rename follow-up | Accepted risk, follow-up in Milestone 2 |
+| Annie (internal) | "Pinned in `requirements.txt`" contradicts #48 not being merged | Sections 2 and 3 now say the issue tracker pins arrive with #48 | Changed |
 
 ---
 
@@ -320,7 +331,7 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Merge the issue tracker into `hw3-milestone1` | Unassigned | PR | — | Nov 18 |
 | Build and test the composed operation | Unassigned | PR, observed response in section 3 | Two rows above | Nov 18 |
 | CI and deploy for `hw3-milestone1` | Unassigned | Green run, deployed `/health` | — | Nov 18 |
-| Internal review of this document | Internal reviewer | PR comments | Draft complete | Nov 18 |
+| Internal review of this document | Annie | 6 comments, all answered in the review log | Draft complete | Done Nov 18 |
 | External review of sections 3, 6 and 7 | External reviewer | PR comments, answered in the review log | Draft complete | Before Milestone 2 |
 
 ## Change record
@@ -328,3 +339,4 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | Date | What changed | Why |
 | --- | --- | --- |
 | Nov 18, 2026 | HW3 design written; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
+| Nov 18, 2026 | Title capped at 245; deploy and CI branch problem, conformance location, unknown outcomes, error naming and pins clarified | Annie's internal review |
