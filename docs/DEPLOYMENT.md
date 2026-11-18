@@ -28,7 +28,7 @@ The container listens on port 8000, published only on the VM's `127.0.0.1`. Live
    ```bash
    git clone https://github.com/Dayana20/sandbox.git ~/sandbox
    cd ~/sandbox
-   git switch hw2-milestone3
+   git switch hw3-milestone1
    ```
 4. Create `~/sandbox/.env` with the Dropbox credentials (same names as `.env.example`), readable only by the deploy user:
    ```bash
@@ -60,20 +60,20 @@ For the conformance job in CI, add these under **Settings → Secrets and variab
 
 ## Deploy a new version
 
-1. Merge the change into `hw2-milestone3` through a reviewed PR, and wait for CI to pass.
+1. Merge the change into `hw3-milestone1` through a reviewed PR, and wait for CI to pass.
 2. Tag that commit and push the tag:
    ```bash
-   git switch hw2-milestone3 && git pull
+   git switch hw3-milestone1 && git pull
    git tag deploy-oci-$(date +%Y%m%d-%H%M)
    git push origin --tags
    ```
 3. The **Deploy Document Storage API to OCI** workflow then SSHes into the VM and:
-   - refuses to run if the VM's checkout has local changes, `.env` is missing, or `hw2-milestone3` moved since the tag
+   - refuses to run if the VM's checkout has local changes, `.env` is missing, or `hw3-milestone1` moved since the tag
    - fast-forwards the VM to that commit, rebuilds the image and restarts only the `api` container
    - waits up to 90 seconds for `GET /health`, and fails the run if it never answers
 4. Check it: the workflow run is green, and on the VM `curl -fsS http://127.0.0.1:8000/health/provider` returns `{"status":"ok"}`.
 
-**Roll back:** the workflow only deploys the commit `hw2-milestone3` currently points at, so the cleanest rollback is a revert PR followed by a new tag. In an emergency, on the VM:
+**Roll back:** the workflow only deploys the commit `hw3-milestone1` currently points at, so the cleanest rollback is a revert PR followed by a new tag. In an emergency, on the VM:
 ```bash
 cd ~/sandbox
 git switch --detach <good-commit>
