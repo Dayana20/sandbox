@@ -8,7 +8,7 @@
 | **Authors** | Shini Agarwal (document). Integration code by Dayana Alejandro (#46, #47, #48) and Yashwanth Kasanneni (#49, deployment) |
 | **Team / vertical** | Team 1, Document Storage (Dropbox): Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni |
 | **Internal reviewer** | Annie Jain (comments answered in the review log, section 8) |
-| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TBD (one reviewer from another team) |
+| **External reviewer** (contract-facing parts: sections 3, 6 and 7) | ⚠️ TBD (one reviewer from another team; Kristie Lee from Team 5, who consumes our package, is a natural fit) |
 | **Status** | Draft |
 | **Last updated** | Nov 18, 2026 |
 | **Shared contracts** | Storage: [ospsd26-cloud-storage](https://github.com/Dayana20/ospsd26-cloud-storage) `0.2.0` (service) and `0.3.1` (standalone package). Calendar: [OSPSD-Calendar](https://github.com/Airbus-A330/OSPSD-Calendar) `calendar-contract v0.1.0`. Issue Tracker: [OSPSD-Team-4](https://github.com/Tyler-Arciniaga/OSPSD-Team-4) `issue-tracker-contract-v1.1.0` |
@@ -150,6 +150,15 @@ After implementation this is replaced by a sanitized observed response and the c
 
 **HW2 operations:** every storage route stays as it is. Other teams consume our storage through the standalone package `packages/team1_dropbox` (#49), not through our HTTP API.
 
+**Who consumes our storage:**
+
+| Team | How | Status |
+| --- | --- | --- |
+| Team 5 (Kristie Lee) | Imports `team1_dropbox` (`from team1_dropbox import Team1DropboxStorage`) against contract `0.3.1`, with **their own** Dropbox app and credentials. Test folder `/team5-hw3-tests/` agreed for runs against our account | Installed from the `hw3-dropbox-package` branch; guide in [packages/team1_dropbox/README.md](https://github.com/Dayana20/sandbox/blob/hw3-dropbox-package/packages/team1_dropbox/README.md) |
+| Team 2 | Requested a tagged, installable `DocumentStorage` package with a non-colliding import namespace (issue #50) | Package exists; tag pending |
+
+Both should install from a **tag or commit SHA**, not the `hw3-dropbox-package` branch, so a later push cannot change what they run (issue #50).
+
 ---
 
 ## 4. Alternatives and tradeoffs
@@ -228,7 +237,11 @@ Live runs create real events, documents and cards. The smoke scripts (`scripts/s
 
 ### Deployment
 
-Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). On `hw3-milestone1` today:
+Docker image on an OCI VM, deployed by pushing a `deploy-oci-*` tag ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). The **HW2 storage service is deployed and publicly reachable** (Yashwanth verified create, download and delete, and shared the address with Team 5 privately; it is not recorded in this repository).
+
+**Exposure risk:** the deployed API has **no caller authentication**. Anyone who knows the address can create, read and delete files in our Dropbox app folder. Accepted for now because the folder holds only test data and the address is shared only with partner teams; it must be closed before real users (Milestone 2 requires user isolation and authorization).
+
+On `hw3-milestone1` today:
 
 - `ci.yml` runs only for pushes and PRs on `hw2-milestone3`, so **no CI runs for `hw3-milestone1`**, including the storage conformance job.
 - `deploy-oci.yml` runs on **any** `deploy-oci-*` tag, but the remote script hard-codes `git fetch origin hw2-milestone3` and `git switch hw2-milestone3`. A tag on an HW3 commit therefore cannot deploy HW3: the script's check that `hw2-milestone3` points at the tagged commit fails ("Branch changed since workflow started"). If both happened to point at the same commit, it would deploy from the HW2 branch.
@@ -267,7 +280,7 @@ Both workflows must name `hw3-milestone1` before the operation can be deployed f
 
 ### If a contract changes
 
-Whoever finds the problem opens an issue on the owning team's repository with a reproduction and does not patch the contract alone. We move a pin only when the owner publishes a new tag. Consumers of **our** storage package (Team 2, issue #50) are told in the shared Slack channel before we publish an incompatible storage tag.
+Whoever finds the problem opens an issue on the owning team's repository with a reproduction and does not patch the contract alone. We move a pin only when the owner publishes a new tag. Consumers of **our** storage package (Team 5 in the `Team1_Team5` Slack channel, Team 2 on issue #50) are told before we publish an incompatible storage tag, and keep the previous tag until they move.
 
 ### Issue tracker: one behavior, two implementations
 
@@ -294,7 +307,12 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 - **Issue tracker:** Team 4 keeps its suite in `contract/tests/conformance` and runs it against its providers.
 - A mismatch would show up as a failing conformance test, for example our fake accepting a timestamp without an offset that the contract rejects.
 
-**Contract mismatches found so far:** none. The partner packages have not yet been run live from our service, so this is not evidence of compatibility; the smoke scripts and the early end-to-end step check it.
+**Contract mismatches**
+
+| Direction | Mismatch | Reproduction | Resolution |
+| --- | --- | --- | --- |
+| Reported **to us** by Team 5 (Nov 16) | Installing our service from `hw2-milestone3` (commit `6567b26`) builds a package named `app==0.0.0`, which collides with the consumer's own `app` namespace; and our storage interface exposes `upload()` instead of the shared contract's `create()` | `pip install` of the repo at `6567b26`, then `import app` in Team 5's project | Fixed by the standalone package (#49): import namespace `team1_dropbox`, class `Team1DropboxStorage` implementing `cloud_storage_api` `0.3.1` `DocumentStorage` (`create`, `replace`, …). Team 5 is integrating it |
+| Found by us in Team 4 or Team 5 packages | None so far | — | The partner packages have not yet been run live from our service, so this is not evidence of compatibility; the smoke scripts and the early end-to-end step check it |
 
 **Known gaps:** no test covers more than one vertical in one request yet, and the live smoke scripts are not in CI.
 
@@ -309,6 +327,8 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | 3 | Stay on storage `0.2.0` or move to `0.3.1`? | Only adds streaming methods with defaults | Same as 1 | Proposed: stay for M1 |
 | 4 | CI and deploy for `hw3-milestone1` | No CI runs for HW3 code, and a deploy tag on HW3 code fails the branch check (section 5) | Unassigned | Name `hw3-milestone1` in `ci.yml` and in the fetch/switch lines of `deploy-oci.yml` |
 | 5 | Partner credentials on the VM and in CI | The deployment cannot call Teams 4 and 5 without them | Unassigned | See section 5 |
+| 6 | Tag the `team1_dropbox` package for Teams 5 and 2 | They install from a moving branch today | Yashwanth | Tag a reviewed commit and share the pin (issue #50) |
+| 7 | Caller authentication on the deployed API | Anyone with the address can change our test folder | Unassigned | Required before Milestone 2 users |
 
 ### Review log
 
@@ -340,3 +360,4 @@ The service only sees `IssueProvider` from `issue_tracker_contract`. `TRACKER_IM
 | --- | --- | --- |
 | Nov 18, 2026 | HW3 design written; HW2 design moved to `docs/DESIGN-HW2.md` | HW3 Milestone 1 |
 | Nov 18, 2026 | Title capped at 245; deploy and CI branch problem, conformance location, unknown outcomes, error naming and pins clarified | Annie's internal review |
+| Nov 18, 2026 | Added our storage consumers (Teams 5 and 2), the mismatch Team 5 reported and its fix, the deployed endpoint's exposure risk, and package tagging | Team 1–Team 5 Slack thread |
