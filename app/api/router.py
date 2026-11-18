@@ -9,6 +9,7 @@ from app.api.routes.update import router as update_router
 from app.api.routes.upload import router as upload_router
 from app.api.routes.download import router as download_router
 from app.api.routes.check_health import router as check_health_router
+from app.api.routes.workflows import router as workflows_router
 
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(update_router)
 api_router.include_router(delete_router)
 api_router.include_router(download_router)
 api_router.include_router(check_health_router)
+api_router.include_router(workflows_router)
