@@ -75,9 +75,9 @@ jobs:
           fi
 
           # Fetch the approved deployment branch.
-          git fetch origin hw2-milestone3
+          git fetch origin hw3-milestone1
 
-          REMOTE_SHA="$(git rev-parse origin/hw2-milestone3)"
+          REMOTE_SHA="$(git rev-parse origin/hw3-milestone1)"
 
           # Prevent deploying a different commit than the
           # one selected in GitHub Actions.
@@ -86,7 +86,7 @@ jobs:
             exit 1
           fi
 
-          git switch hw2-milestone3
+          git switch hw3-milestone1
           git merge --ff-only "$DEPLOY_SHA"
 
           echo "Deploying commit: $DEPLOY_SHA"

@@ -12,27 +12,37 @@ class Settings:
         "Document Storage Service",
     )
 
+    calendar_impl: str = os.getenv(
+        "CALENDAR_IMPL",
+        "fake",
+    )
+
+    team5_token_file: str | None = os.getenv("TEAM5_TOKEN_FILE")
+
+    tracker_impl: str = os.getenv(
+        "TRACKER_IMPL",
+        "fake",
+    )
+
+    trello_api_key: str | None = os.getenv("TRELLO_API_KEY")
+
+    trello_token: str | None = os.getenv("TRELLO_TOKEN")
+
+    trello_list_id: str | None = os.getenv("TRELLO_LIST_ID")
+
     dropbox_access_token: str | None = os.getenv(
         "DROPBOX_ACCESS_TOKEN"
     )
 
-    dropbox_refresh_token: str | None = os.getenv(
-        "DROPBOX_REFRESH_TOKEN"
-    )
+    dropbox_refresh_token: str | None = os.getenv("DROPBOX_REFRESH_TOKEN")
 
-    dropbox_app_key: str | None = os.getenv(
-        "DROPBOX_APP_KEY"
-    )
+    dropbox_app_key: str | None = os.getenv("DROPBOX_APP_KEY")
 
-    dropbox_app_secret: str | None = os.getenv(
-        "DROPBOX_APP_SECRET"
-    )
+    dropbox_app_secret: str | None = os.getenv("DROPBOX_APP_SECRET")
 
     # One Redis for both features. Metadata caching is on only when this is
     # set. Uploads that send an Idempotency-Key are refused (503) without it.
-    redis_url: str | None = os.getenv(
-        "REDIS_URL"
-    )
+    redis_url: str | None = os.getenv("REDIS_URL")
 
     metadata_cache_ttl_seconds: int = int(
         os.getenv("METADATA_CACHE_TTL_SECONDS", "60")

@@ -4,10 +4,14 @@ FastAPI service for storing and retrieving documents. Dropbox is the first provi
 
 **Team 1:** Dayana Alejandro, Shini Agarwal, Annie Jain, Laya Mangalagiri, Yashwanth Kasanneni
 
-**Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [DESIGN.md](DESIGN.md) (HW2: adopting the shared Document Storage API) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (deploy to OCI: setup and teardown) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
+**Docs:** [TUTORIAL.md](TUTORIAL.md) (demo: one file through upload, read, rename and delete) · [DESIGN.md](DESIGN.md) (HW3: composing storage, calendar and issue tracker) · [docs/DESIGN-HW2.md](docs/DESIGN-HW2.md) (HW2: adopting the shared Document Storage API) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (deploy to OCI: setup and teardown) · [docs/DECISIONS.md](docs/DECISIONS.md) (engineering decisions) · [docs/COST.md](docs/COST.md) (cost of one operation: upload) · [docs/EXTENSION.md](docs/EXTENSION.md) (extending a teammate's feature) · [TESTING.md](TESTING.md) · [docs/WORKFLOW.md](docs/WORKFLOW.md) · [AGENTS.md](AGENTS.md)
 
 Routes depend on the `DocumentStorage` contract, not on Dropbox directly. `get_document_storage()` supplies a `DropboxStorage` in production. Tests can substitute `FakeDocumentStorage`. `POST /files` (upload), `GET /files` (List), `PUT /files` (replace), `PATCH /files` (rename/move), `DELETE /files`, `GET /files/metadata`, and `GET /files/download` (download) are built. `GET /health/provider` checks whether the Dropbox connection is up using the lightweight `users_get_current_account()` call; `/health/storage` remains as an alias.
 
+
+## Composed workflow (HW3)
+
+`POST /workflows/meeting` with `{"title", "start", "end"}` creates a calendar event, saves a notes document for it at `/meetings/<event-id>.md`, and opens the issue `Follow up: <title>`. It returns `201` with all three. If a step fails, earlier steps are undone and the error says which step failed. The calendar and issue tracker implementations are chosen with `CALENDAR_IMPL=fake|team5` and `TRACKER_IMPL=fake|team4`. How to run it and recorded runs: [docs/HW3-M1-EVIDENCE.md](docs/HW3-M1-EVIDENCE.md). Design: [DESIGN.md](DESIGN.md).
 
 ## Base
 
@@ -713,7 +717,7 @@ mypy app
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, `yashwanth` and `milestone-3`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.12, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, `yashwanth` and `milestone-3`. It installs `requirements.txt` (direct dependencies pinned to the tested versions) on Python 3.14, then runs `pytest`, `ruff check .`, and `mypy app`. It uses no Dropbox token, so live Dropbox tests are not part of it.
 
 ## Layout
 
@@ -740,7 +744,7 @@ requirements.txt
 
 ## Setup
 
-Python 3.12 (pinned in `.python-version`; CI uses the same version). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
+Python 3.14 or newer (`.python-version` pins local setup to 3.14; CI uses Python 3.14). Copy `.env.example` to `.env` and fill it in. `.env` stays local.
 
 Windows (PowerShell):
 

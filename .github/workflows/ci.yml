@@ -5,10 +5,12 @@ on:
   pull_request:
     branches:
       - hw2-milestone3
+      - hw3-milestone1
 
   push:
     branches:
       - hw2-milestone3
+      - hw3-milestone1
 
 permissions:
   contents: read
@@ -25,7 +27,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
 
       - name: Install dependencies
@@ -51,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     # Secrets are not available to pull requests from forks, so the live
-    # suite runs on pushes to hw2-milestone3 and on PRs from this repo.
+    # suite runs on pushes to hw2-milestone3 and hw3-milestone1, and on PRs from this repo.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
@@ -74,7 +76,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
 
       - name: Install dependencies
